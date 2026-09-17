@@ -1,0 +1,18 @@
+services:
+  scrcpy-relay:
+    build: .
+    container_name: scrcpy-relay
+    restart: unless-stopped
+    network_mode: host   # simplest for adb + Tailscale; see README for bridge alternative
+    environment:
+      # Tablet wireless-adb endpoint (IP or Tailscale hostname)
+      - TABLET_HOST=${TABLET_HOST:?Set TABLET_HOST in .env}
+      - TABLET_PORT=${TABLET_PORT:-5555}
+      # How often the keepalive loop re-checks/reconnects adb (seconds)
+      - KEEPALIVE_INTERVAL=${KEEPALIVE_INTERVAL:-30}
+      # Optional: pass extra flags through to ws-scrcpy (space-separated)
+      - WSSCRCPY_OPTS=${WSSCRCPY_OPTS:-}
+    # If you prefer an explicit port mapping instead of host networking:
+    # network_mode: bridge
+    # ports:
+    #   - "8000:8000"
