@@ -3,16 +3,24 @@ services:
     build: .
     container_name: scrcpy-relay
     restart: unless-stopped
-    network_mode: host   # simplest for adb + Tailscale; see README for bridge alternative
+    network_mode: bridge
+    ports:
+      # ws-scrcpy has NO built-in authentication — anyone who can reach this
+      # port gets live view + touch control of the tablet. BIND_HOST is the
+      # ONLY thing standing between "Tailscale only" and "open to your whole
+      # LAN", so set it to the relay host's Tailscale IP in .env. Left at the
+      # 127.0.0.1 default, the relay is reachable only from the host itself
+      # (safe, but also unreachable from your iPhone over Tailscale).
+      - "${BIND_HOST:-127.0.0.1}:8000:8000"
     environment:
       # Tablet wireless-adb endpoint (IP or Tailscale hostname)
       - TABLET_HOST=${TABLET_HOST:?Set TABLET_HOST in .env}
       - TABLET_PORT=${TABLET_PORT:-5555}
       # How often the keepalive loop re-checks/reconnects adb (seconds)
       - KEEPALIVE_INTERVAL=${KEEPALIVE_INTERVAL:-30}
-      # Optional: pass extra flags through to ws-scrcpy (space-separated)
-      - WSSCRCPY_OPTS=${WSSCRCPY_OPTS:-}
-    # If you prefer an explicit port mapping instead of host networking:
-    # network_mode: bridge
-    # ports:
-    #   - "8000:8000"
+    # If adb can't reach the tablet through bridge-mode NAT (isolated VLAN,
+    # some Tailscale subnet-router setups), fall back to host networking —
+    # but then the ports: mapping above is bypassed entirely: ws-scrcpy binds
+    # 0.0.0.0:8000 directly on the host, and YOU must firewall it yourself,
+    # e.g. `ufw allow in on tailscale0 to any port 8000 && ufw deny 8000`.
+    # network_mode: host

@@ -15,10 +15,11 @@ KEEPALIVE_INTERVAL="${KEEPALIVE_INTERVAL:-30}"
 echo "[relay] target: ${TABLET_HOST}:${TABLET_PORT}"
 echo "[relay] keepalive every ${KEEPALIVE_INTERVAL}s"
 
-# Kill the keepalive loop (and this whole entrypoint) if ws-scrcpy dies.
+# Kill the keepalive loop and ws-scrcpy, then disconnect adb.
 cleanup() {
   echo "[relay] shutting down"
   kill "${KEEPALIVE_PID:-}" 2>/dev/null || true
+  kill "${NODE_PID:-}" 2>/dev/null || true
   adb disconnect "${TABLET_HOST}:${TABLET_PORT}" 2>/dev/null || true
   exit 0
 }
@@ -45,7 +46,12 @@ KEEPALIVE_PID=$!
 
 # ---- ws-scrcpy ----
 echo "[relay] starting ws-scrcpy on :8000"
-# `exec` replaces this shell so ws-scrcpy becomes PID 1's child and receives
-# signals directly; the trap above still fires via the bash trap on TERM.
+# Run node in the background (not `exec`) so the trap above stays live on
+# this shell — `exec`ing node would replace the shell process image and the
+# trap would never fire on TERM/INT, leaving adb connected and the keepalive
+# loop orphaned until Docker SIGKILLs the whole cgroup.
 cd /opt/ws-scrcpy
-exec node dist/index.js
+node dist/index.js &
+NODE_PID=$!
+wait "${NODE_PID}"
+cleanup

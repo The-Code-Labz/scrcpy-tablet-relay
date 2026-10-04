@@ -10,8 +10,8 @@ no per-session setup.
 │  (apps run   │                                     │  Docker container    │               │ Safari │
 │   24/7)      │ ◀────────────────────────────────── │  adb + ws-scrcpy     │ ◀──────────── │  PWA   │
 └──────────────┘   scrcpy video stream + touch input  └──────────────────────┘               └────────┘
-                                                            │ Tailscale only
-                                                       (no public port exposure)
+                                                            │ bound to Tailscale IP
+                                                       (see BIND_HOST below)
 ```
 
 * **Real touch injection** — scrcpy's native multitouch protocol, not VNC mouse emulation.
@@ -20,7 +20,8 @@ no per-session setup.
   See *Audio caveats* below for web-client decode limits.
 * **Self-healing** — a keepalive loop reconnects adb every 30 s after tablet reboots,
   Wi-Fi flaps, or relay restarts. No manual intervention.
-* **Tailscale only** — never exposed to the public internet.
+* **Tailscale-bound** — `BIND_HOST` publishes port 8000 only on the relay
+  host's Tailscale IP, since ws-scrcpy has no built-in authentication.
 
 ---
 
@@ -50,7 +51,8 @@ Requires: Docker + docker compose plugin.
 git clone https://github.com/The-Code-Labz/scrcpy-tablet-relay.git
 cd scrcpy-tablet-relay
 cp .env.example .env
-# edit .env — set TABLET_HOST (tablet LAN IP or Tailscale hostname)
+# edit .env — set TABLET_HOST (tablet LAN IP or Tailscale hostname) and
+# BIND_HOST (the relay host's own Tailscale IP, from `tailscale ip -4`)
 docker compose up -d --build
 docker compose logs -f           # watch: "[relay] target ..." then ws-scrcpy startup
 ```
@@ -107,7 +109,7 @@ Confirm audio early with one short session before relying on it.
 | Works, then drops after tablet reboot | Authorization revoked → accept the prompt again once; the keepalive then maintains it |
 | Tablet IP changed | Use a DHCP reservation, or set `TABLET_HOST` to the tablet's **Tailscale hostname** (stable) and install Tailscale on the tablet |
 | ws-scrcpy page is empty / no device | Check `docker compose logs` — adb must show the device as `device`, not `offline`/`unauthorized` |
-| Laggy video | Lower ws-scrcpy bitrate: add `WSSCRCPY_OPTS=--max-size 1280` (or set `--bit-rate` via config) |
+| Laggy video | ws-scrcpy has no server-side bitrate flags/env vars. On the device list page, click the gear/**Configure stream** button next to the tablet *before* connecting, and lower **Bitrate** / **Max size** there — it's a per-session, client-side (browser) setting |
 | No audio on iPhone | See *Audio caveats* — Safari WebCodecs limitation, not a relay bug |
 
 ## iPhone PWA behavior (known quirks)
@@ -125,13 +127,13 @@ All in `.env` (see `.env.example`):
 | `TABLET_HOST` | — (required) | Tablet IP or Tailscale hostname |
 | `TABLET_PORT` | `5555` | Pinned wireless-adb port |
 | `KEEPALIVE_INTERVAL` | `30` | Seconds between adb reconnect checks |
-| `WSSCRCPY_OPTS` | — | Extra flags for ws-scrcpy |
+| `BIND_HOST` | `127.0.0.1` | Host IP port 8000 is published on — set to your Tailscale IP |
 
 ## Files
 
 ```
 Dockerfile          Node 20 + adb + ws-scrcpy build
 entrypoint.sh       adb connect → 30s keepalive loop → ws-scrcpy on :8000
-docker-compose.yml  restart: unless-stopped, host networking
+docker-compose.yml  restart: unless-stopped, bridge networking bound to BIND_HOST
 .env.example        configuration template
 ```
