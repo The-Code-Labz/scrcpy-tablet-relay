@@ -1,16 +1,26 @@
 services:
   scrcpy-relay:
-    build: .
+    # Pulls the image built by .github/workflows/docker-publish.yml on every
+    # push to main. Set IMAGE_TAG in .env to pin a specific tag/sha instead
+    # of floating on :latest. Uncomment the line below to build locally from
+    # the Dockerfile instead (e.g. while hacking on entrypoint.sh).
+    image: ghcr.io/the-code-labz/scrcpy-tablet-relay:${IMAGE_TAG:-latest}
+    # build: .
     container_name: scrcpy-relay
     restart: unless-stopped
-    network_mode: bridge
     ports:
-      # ws-scrcpy has NO built-in authentication — anyone who can reach this
-      # port gets live view + touch control of the tablet. BIND_HOST is the
-      # ONLY thing standing between "Tailscale only" and "open to your whole
-      # LAN", so set it to the relay host's Tailscale IP in .env. Left at the
-      # 127.0.0.1 default, the relay is reachable only from the host itself
-      # (safe, but also unreachable from your iPhone over Tailscale).
+      # Direct-publish fallback for anyone NOT running Traefik — exactly the
+      # pre-Traefik behavior. ws-scrcpy has NO built-in authentication —
+      # anyone who can reach this port gets live view + touch control of the
+      # tablet. BIND_HOST is the ONLY thing standing between "Tailscale only"
+      # and "open to your whole LAN", so set it to the relay host's Tailscale
+      # IP in .env. Left at the 127.0.0.1 default, the relay is reachable
+      # only from the host itself.
+      #
+      # Safe to leave this published even when fronting the service with
+      # Traefik (see labels below) — it's an additional path in, not a
+      # replacement for one. Set BIND_HOST=127.0.0.1 (or drop this block
+      # entirely) if you want Traefik to be the ONLY way in.
       - "${BIND_HOST:-127.0.0.1}:8000:8000"
     environment:
       # Tablet wireless-adb endpoint (IP or Tailscale hostname)
@@ -18,9 +28,45 @@ services:
       - TABLET_PORT=${TABLET_PORT:-5555}
       # How often the keepalive loop re-checks/reconnects adb (seconds)
       - KEEPALIVE_INTERVAL=${KEEPALIVE_INTERVAL:-30}
-    # If adb can't reach the tablet through bridge-mode NAT (isolated VLAN,
-    # some Tailscale subnet-router setups), fall back to host networking —
-    # but then the ports: mapping above is bypassed entirely: ws-scrcpy binds
-    # 0.0.0.0:8000 directly on the host, and YOU must firewall it yourself,
-    # e.g. `ufw allow in on tailscale0 to any port 8000 && ufw deny 8000`.
-    # network_mode: host
+    networks:
+      # Default bridge-type network for adb's outbound connection to the
+      # tablet, PLUS the external Traefik network below so Traefik's Docker
+      # provider can reach the container directly (no published port needed
+      # for that path). If adb can't reach the tablet through bridge-mode
+      # NAT (isolated VLAN, some Tailscale subnet-router setups), the
+      # old host-networking fallback still applies — but note `network_mode:
+      # host` is NOT compatible with the `networks:`/`ports:` keys used here
+      # at the same time; if you need it, drop both of those blocks first,
+      # and Traefik label-based routing then requires a different setup
+      # (route to the host's IP:8000 instead of the container).
+      - default
+      - traefik-network
+    labels:
+      # --- Traefik reverse-proxy wiring ---
+      # ws-scrcpy is a plain HTTP/WebSocket server (no WSS of its own) —
+      # Traefik terminates TLS and proxies the Upgrade: websocket handshake
+      # through transparently on an http router with NO extra config: v2/v3
+      # pass the Connection/Upgrade headers through by default on both
+      # entrypoints. The one thing that WOULD break it is a compression
+      # middleware (traefik.http.middlewares.*.compress) attached to this
+      # router — don't add one.
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-dokploy-network}"
+      - "traefik.http.routers.scrcpy-relay.rule=Host(`${SCRCPY_HOSTNAME:-scrcpy.example.com}`)"
+      - "traefik.http.routers.scrcpy-relay.entrypoints=websecure"
+      - "traefik.http.routers.scrcpy-relay.tls=true"
+      - "traefik.http.routers.scrcpy-relay.tls.certresolver=${TRAEFIK_CERTRESOLVER:-cloudflare}"
+      - "traefik.http.routers.scrcpy-relay.service=scrcpy-relay"
+      - "traefik.http.services.scrcpy-relay.loadbalancer.server.port=8000"
+
+networks:
+  default: {}
+  traefik-network:
+    # Traefik must already be attached to this network (Dokploy's default is
+    # `dokploy-network`) — it only discovers containers on networks it's
+    # watching, labels alone are not enough. Override the name via
+    # TRAEFIK_NETWORK in .env if your Traefik uses something else, or delete
+    # this network + the `traefik-network` entry under the service's
+    # `networks:` and the `labels:` block entirely if you don't run Traefik.
+    external: true
+    name: ${TRAEFIK_NETWORK:-dokploy-network}

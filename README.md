@@ -128,12 +128,36 @@ All in `.env` (see `.env.example`):
 | `TABLET_PORT` | `5555` | Pinned wireless-adb port |
 | `KEEPALIVE_INTERVAL` | `30` | Seconds between adb reconnect checks |
 | `BIND_HOST` | `127.0.0.1` | Host IP port 8000 is published on — set to your Tailscale IP |
+| `IMAGE_TAG` | `latest` | Tag pulled from `ghcr.io/the-code-labz/scrcpy-tablet-relay` |
+| `SCRCPY_HOSTNAME` | `scrcpy.example.com` | Hostname Traefik routes to this service (Traefik users only) |
+| `TRAEFIK_NETWORK` | `dokploy-network` | Docker network your Traefik instance watches (Traefik users only) |
+| `TRAEFIK_CERTRESOLVER` | `cloudflare` | Traefik certresolver for automatic TLS (Traefik users only) |
+
+### Traefik (optional)
+
+`docker-compose.yml` ships Traefik labels and attaches the container to an
+external `traefik-network` (named via `TRAEFIK_NETWORK`, default
+`dokploy-network`) alongside the default bridge network ws-scrcpy/adb use.
+
+- **Running Traefik already?** Set `SCRCPY_HOSTNAME`/`TRAEFIK_NETWORK`/
+  `TRAEFIK_CERTRESOLVER` in `.env` to match your setup. Traefik terminates
+  TLS and proxies ws-scrcpy's WebSocket upgrade transparently — no extra
+  middleware needed (just don't attach a compression middleware to this
+  router, that breaks WS).
+- **Not running Traefik?** Nothing to do — the direct `BIND_HOST:8000`
+  publish still works exactly as before. To fully remove the Traefik
+  wiring, delete the `labels:` block, the `traefik-network` network, and
+  its entry under the service's `networks:` key.
+- The external network must already exist and have Traefik attached to it
+  (`docker network create dokploy-network` if you're starting fresh) —
+  Traefik only discovers containers on networks it's watching; labels alone
+  aren't enough.
 
 ## Files
 
 ```
 Dockerfile          Node 20 + adb + ws-scrcpy build
 entrypoint.sh       adb connect → 30s keepalive loop → ws-scrcpy on :8000
-docker-compose.yml  restart: unless-stopped, bridge networking bound to BIND_HOST
+docker-compose.yml  restart: unless-stopped; BIND_HOST direct publish + optional Traefik labels
 .env.example        configuration template
 ```
