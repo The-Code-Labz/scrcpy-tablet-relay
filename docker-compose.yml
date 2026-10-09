@@ -28,6 +28,16 @@ services:
       - TABLET_PORT=${TABLET_PORT:-5555}
       # How often the keepalive loop re-checks/reconnects adb (seconds)
       - KEEPALIVE_INTERVAL=${KEEPALIVE_INTERVAL:-30}
+      # One-time pairing (Android 11+ Wireless debugging). Fill these in from
+      # the tablet's "Pair device with pairing code" screen, redeploy once,
+      # then blank them out again — the paired key persists in ./adb-data.
+      - PAIR_HOST=${PAIR_HOST:-}
+      - PAIR_PORT=${PAIR_PORT:-}
+      - PAIR_CODE=${PAIR_CODE:-}
+    volumes:
+      # Persists ~/.android (adbkey + adbkey.pub + paired-device trust) so a
+      # redeploy/recreate doesn't generate a fresh keypair and lose pairing.
+      - ./adb-data:/root/.android
     networks:
       # Default bridge-type network for adb's outbound connection to the
       # tablet, PLUS the external Traefik network below so Traefik's Docker

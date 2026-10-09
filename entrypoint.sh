@@ -15,6 +15,19 @@ KEEPALIVE_INTERVAL="${KEEPALIVE_INTERVAL:-30}"
 echo "[relay] target: ${TABLET_HOST}:${TABLET_PORT}"
 echo "[relay] keepalive every ${KEEPALIVE_INTERVAL}s"
 
+# One-time Wireless Debugging pairing. Android 11+ wireless debugging
+# requires the device to trust this container's adb public key before any
+# `adb connect` on TABLET_PORT will do anything but hang at "offline" — set
+# PAIR_HOST/PAIR_PORT/PAIR_CODE (from the tablet's Settings > Developer
+# options > Wireless debugging > "Pair device with pairing code" screen)
+# for one deploy to establish trust, then unset them again. Once paired,
+# the key (persisted under ~/.android via the adb-data volume) is trusted
+# permanently — this block is a no-op on every boot after that.
+if [ -n "${PAIR_HOST:-}" ] && [ -n "${PAIR_PORT:-}" ] && [ -n "${PAIR_CODE:-}" ]; then
+  echo "[relay] pairing with ${PAIR_HOST}:${PAIR_PORT}"
+  adb pair "${PAIR_HOST}:${PAIR_PORT}" "${PAIR_CODE}" || echo "[relay] pairing failed (code likely expired) — set fresh PAIR_* vars and redeploy"
+fi
+
 # Kill the keepalive loop and ws-scrcpy, then disconnect adb.
 cleanup() {
   echo "[relay] shutting down"
