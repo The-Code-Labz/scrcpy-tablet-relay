@@ -1,0 +1,103 @@
+/* ---------------------------------------------------------------------
+ * scrcpy-tablet-relay — mobile/touch/PWA overrides
+ * Appended to src/style/app.css at image build time (see Dockerfile).
+ * Keeps the mouse/desktop layout intact; only adds coarse-pointer and
+ * narrow-viewport rules so this still behaves on a normal desktop browser.
+ * ------------------------------------------------------------------- */
+
+html, body {
+    overscroll-behavior: none;
+    -webkit-text-size-adjust: 100%;
+}
+
+/* Respect iPhone notch / home-indicator safe areas so the toolbox strip
+   and device list aren't drawn under them in standalone (PWA) mode. */
+@supports (padding: max(0px)) {
+    .control-buttons-list {
+        padding-top: max(.357rem, env(safe-area-inset-top));
+        padding-bottom: max(.357rem, env(safe-area-inset-bottom));
+    }
+    body.list #devices {
+        padding-left: max(0px, env(safe-area-inset-left));
+        padding-right: max(0px, env(safe-area-inset-right));
+    }
+}
+
+/* The video/touch surface and toolbox are the "app chrome" — behave like
+   a native screen, not a web page: no text selection callouts, no
+   rubber-banding, no long-press magnifier fighting with scrcpy's own
+   touch forwarding. Form inputs (dialogs, file listing, terminal) are
+   deliberately left alone below. */
+.video-layer,
+.touch-layer,
+.control-buttons-list,
+.more-box {
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* Touch targets: Apple HIG / Material both call for >=44x44 CSS px.
+   Desktop mouse users keep the original compact 2.143rem buttons; coarse
+   pointers (touch) get a roomier panel and bigger hit areas. */
+@media (pointer: coarse) {
+    :root {
+        --panel-width: 4.3rem;
+    }
+
+    .control-button {
+        width: 2.86rem;
+        height: 2.86rem;
+        margin: .45rem .72rem;
+    }
+
+    #devices .device-list div.desc-block button {
+        padding: .5rem;
+    }
+
+    #devices .device-list div.desc-block button > svg {
+        width: 1.3rem;
+        height: 1.3rem;
+    }
+
+    #devices .device-list div.device {
+        padding: .75rem 1rem;
+    }
+
+    .dialog-footer button {
+        min-height: 2.75rem;
+        padding: .6rem 1rem;
+    }
+
+    .control-wrapper > label {
+        min-width: 2.86rem;
+        min-height: 2.86rem;
+    }
+}
+
+/* Small phones in portrait: the fixed left-hand toolbox strip eats a
+   meaningful slice of a ~380px-wide viewport. Trim it back down a bit
+   while staying at/above the 44px touch minimum. */
+@media (pointer: coarse) and (max-width: 480px) {
+    :root {
+        --panel-width: 3.4rem;
+    }
+
+    .control-button {
+        width: 2.2rem;
+        height: 2.2rem;
+        margin: .3rem .6rem;
+    }
+}
+
+/* Standalone/PWA display mode (installed to home screen): there is no
+   browser chrome to anchor to, so pull the toolbox fully to the screen
+   edge using the safe-area insets instead of guessing. */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+    body {
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+        box-sizing: border-box;
+    }
+}

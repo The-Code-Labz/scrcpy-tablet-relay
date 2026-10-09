@@ -81,24 +81,30 @@ Click it → live mirror with full touch control.
 
 ---
 
-## Audio caveats (verify early!)
+## Audio caveats (no audio, on any client)
 
-scrcpy 2.x forwards Android audio (Android 13+), but **decode support depends on the
-client browser**:
+This relay has **no audio support at all** — not a browser-decode limitation,
+a missing feature. The web client (`NetrisTV/ws-scrcpy`) vendors a pinned
+`scrcpy-server.jar` build (`1.19-ws8`, based on scrcpy 1.19) that predates
+scrcpy's audio-forwarding protocol entirely (added upstream in scrcpy 2.0,
+2023) — there is no `audio` code path anywhere in that server binary, and the
+TypeScript client has no audio decoder/player to go with it. Confirmed by
+inspecting the vendored jar (zero `audio` strings) and upstream's own
+tracking issue, [ws-scrcpy#38](https://github.com/NetrisTV/ws-scrcpy/discussions/38),
+which is still an open research discussion, not a shipped feature.
 
-| Client | Audio decode |
-|---|---|
-| Desktop Chrome/Edge | ✅ works (Opus via WebCodecs) |
-| iPhone Safari | ⚠️ hit-or-miss depending on iOS version — **test first** |
+Workarounds:
 
-Fallbacks if Safari won't decode:
+1. Play audio natively on the tablet (it stays audible on-device through its
+   own speakers/Bluetooth) while the relay only mirrors video + input.
+2. Casting the tablet's audio separately (e.g. a local Bluetooth speaker near
+   the tablet) if you need it audible where the relay client is.
 
-1. **Mute the stream** — control-only usage is unaffected.
-2. Use an iOS browser with fuller WebCodecs support (e.g. Orion) for audio.
-3. Play audio natively on the tablet (it stays audible on-device) while the
-   iPhone only sends input.
-
-Confirm audio early with one short session before relying on it.
+Fixing this for real means swapping the underlying relay technology for one
+that implements scrcpy's audio protocol (e.g. a newer scrcpy-server build
+plus matching client decode) — a different project/architecture, not a
+config change to this one. Ask if you want that evaluated as a separate
+effort; it's out of scope for a patch to the current `ws-scrcpy` base.
 
 ## Troubleshooting
 
@@ -109,14 +115,30 @@ Confirm audio early with one short session before relying on it.
 | Works, then drops after tablet reboot | Authorization revoked → accept the prompt again once; the keepalive then maintains it |
 | Tablet IP changed | Use a DHCP reservation, or set `TABLET_HOST` to the tablet's **Tailscale hostname** (stable) and install Tailscale on the tablet |
 | ws-scrcpy page is empty / no device | Check `docker compose logs` — adb must show the device as `device`, not `offline`/`unauthorized` |
-| Laggy video | ws-scrcpy has no server-side bitrate flags/env vars. On the device list page, click the gear/**Configure stream** button next to the tablet *before* connecting, and lower **Bitrate** / **Max size** there — it's a per-session, client-side (browser) setting |
-| No audio on iPhone | See *Audio caveats* — Safari WebCodecs limitation, not a relay bug |
+| Laggy video | ws-scrcpy has no server-side bitrate flags/env vars. The image now ships higher default quality (MSE player: 16 Mbps / up to 1600px; WebCodecs player: 8 Mbps / up to 1600px / 60 fps, up from upstream's 512 kbps–7.3 Mbps 480–720px defaults) — if it's still laggy, your network is the bottleneck, not the defaults. You can still click the gear/**Configure stream** button next to the tablet *before* connecting to tune **Bitrate** / **Max size** per session |
+| No audio | Expected — see *Audio caveats*. This relay has no audio pipeline at all, on any client |
 
-## iPhone PWA behavior (known quirks)
+## PWA / "Add to Home Screen" behavior
 
-* Fullscreen standalone mode works via Add-to-Home-Screen.
-* No Wake Lock needed — the iPhone locking its own screen doesn't affect the tablet.
-* If iOS evicts the PWA from memory, reopening it reconnects in a few seconds.
+The image now ships a real app shell: `manifest.webmanifest`, a minimal
+service worker, and app icons, all generated at build time and served from
+the ws-scrcpy static root (`/manifest.webmanifest`, `/sw.js`, `/icon-*.png`).
+
+* **iPhone (Safari):** Share → **Add to Home Screen** installs it as a
+  standalone app (no Safari chrome), with the app icon and a
+  `black-translucent` status bar, honoring the notch/home-indicator safe
+  areas.
+* **Android (Chrome):** gets an install prompt / "Install app" menu entry.
+* The service worker only caches the HTML shell for offline opening — it
+  deliberately never touches the video/control WebSocket traffic
+  (`?action=proxy-adb&...`), so there's no risk of it serving stale/cached
+  stream data.
+* Touch targets (toolbox buttons, device list rows, dialog buttons) are
+  enlarged to ≥44px on coarse-pointer (touch) devices, and the stream/touch
+  surface disables text-selection callouts and rubber-band scrolling so it
+  feels like a native app rather than a web page.
+* If iOS evicts the PWA from memory, reopening it reconnects in a few
+  seconds — this is normal iOS background-tab behavior, not a relay issue.
 
 ## Configuration
 
@@ -156,8 +178,11 @@ external `traefik-network` (named via `TRAEFIK_NETWORK`, default
 ## Files
 
 ```
-Dockerfile          Node 20 + adb + ws-scrcpy build
-entrypoint.sh       adb connect → 30s keepalive loop → ws-scrcpy on :8000
-docker-compose.yml  restart: unless-stopped; BIND_HOST direct publish + optional Traefik labels
-.env.example        configuration template
+Dockerfile              Node 20 + adb + ws-scrcpy build
+entrypoint.sh           adb connect → 30s keepalive loop → ws-scrcpy on :8000
+docker-compose.yml      restart: unless-stopped; BIND_HOST direct publish + optional Traefik labels
+.env.example            configuration template
+docker/webclient/       build-time overlay on ws-scrcpy: PWA app shell
+                        (manifest/service-worker/icons) + mobile/touch CSS,
+                        applied before `npm run dist` in the Dockerfile
 ```
