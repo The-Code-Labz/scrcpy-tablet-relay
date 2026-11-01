@@ -140,48 +140,63 @@ pairing dance to do.
 
 **Setup:**
 
-1. Set `TANGO_TOKEN` in `.env` (required — see why below) and optionally
-   `TANGO_PORT` (default `8010`).
-2. `docker compose up -d` — both services start together.
-3. Open `http://<host>:8010/?token=<TANGO_TOKEN>`. Pick the tablet from the
-   device dropdown; tap the 🔇 icon to unmute audio (autoplay policies
-   block sound until a user gesture).
+1. In `.env`: optionally set `TANGO_TOKEN` (recommended, not required —
+   see why below), `TANGO_PORT` (default `8010`), and either `BIND_HOST`
+   (direct publish, same as the main relay) or `SCRCPY_AUDIO_HOSTNAME` +
+   the existing `TRAEFIK_*` vars for a second Traefik-routed hostname.
+2. `docker compose up -d` — both services start together, same compose
+   file.
+3. Open it (`https://<SCRCPY_AUDIO_HOSTNAME>/` via Traefik, or
+   `http://<BIND_HOST>:8010/`), add `?token=<TANGO_TOKEN>` to the URL if
+   you set one. Pick the tablet from the device dropdown; tap the 🔇 icon
+   to unmute audio (autoplay policies block sound until a user gesture).
 
-**Why this needs its own HTTPS entry.** WebRTC/WebCodecs require a secure
-context — `https://` or `localhost`, nothing else. This service does **not**
-ride through the existing Traefik router/`BIND_HOST:8000` setup (different
-port, different container network mode — see below), so you need a second
-way to reach it over HTTPS. The cleanest option if the relay host already
-runs Tailscale: `tailscale serve --bg --https=8010 http://127.0.0.1:8010`
-gives you a real cert at `https://<host>.<tailnet>.ts.net:8010`, reachable
-tailnet-wide and nowhere else, with zero extra infrastructure. Plain
-Traefik routing also works if you point a router at the host's IP:8010
-directly (it's not Docker-network-discoverable since the container runs in
-`network_mode: host` — see below).
+**Why this is a separate service instead of just adding audio to
+`scrcpy-relay`.** ws-scrcpy's architecture has no audio code path to
+extend (see above) — tango-mirror is a different stack top to bottom
+(stock scrcpy server + WebRTC instead of a patched scrcpy-server + raw
+WebSocket), so it runs as its own container rather than a patch.
 
-**Why `network_mode: host`, and why `TANGO_TOKEN` is not optional.**
-WebRTC's media (UDP/ICE) needs the browser to reach whatever port the OS
-hands out for that session — tango-mirror exposes no flag to pin that
-range, so Docker's normal bridge-network NAT (which only forwards ports you
-explicitly publish) would silently drop the media stream. Host networking
-is the fix, but it means this port is reachable on **every interface the
-host has**, not just the tailnet — a materially bigger exposure than the
-main relay's `BIND_HOST` pattern. `TANGO_TOKEN` is required (no default) to
-compensate: tango-mirror gates the device list and stream behind it
-(`?token=...`), though the bare HTML shell itself still loads for anyone —
-verified live: `/api/devices` returns `401 {"error":"unauthorized"}`
-without the token, `200` with it.
+**Why it's on the same bridge network + Traefik pattern as `scrcpy-relay`,
+not `network_mode: host`.** WebRTC's ICE candidates still need to
+traverse whatever NAT sits between the viewer and this container, and
+Docker's bridge network is itself a NAT — but a normal one. STUN (baked
+into tango-mirror's defaults: Cloudflare + Google) is specifically
+designed to traverse exactly this kind of NAT, the same way any WebRTC
+app works through a home router without port forwarding. `network_mode:
+host` looks tempting on paper (guarantees a reachable host port for ICE),
+but on a hardened Docker host it can mean the reverse proxy's own
+container can no longer reach it at all — container-to-unpublished-host-
+port traffic gets firewalled off by design on some setups, confirmed live
+while building this (Traefik's requests hung until timeout; this repo
+no longer uses that mode). If ICE still fails for you specifically — only
+likely with a genuinely symmetric NAT on the *viewer's* side — tango-mirror
+supports `--turn cloudflare` for a TURN relay; this repo doesn't wire that
+flag through yet, ask if you hit that wall.
+
+**Why `TANGO_TOKEN` is recommended but not required.** Earlier drafts of
+this made it mandatory because `network_mode: host` would have meant this
+port was reachable on every interface the host has. With the bridge/Traefik
+pattern above, exposure is already gated the same way `scrcpy-relay` is
+(`BIND_HOST` or Traefik's router rule/middlewares), so the token is
+defense-in-depth, not the only thing standing between you and exposure.
+Still worth setting: tango-mirror gates the device list and stream behind
+it (`?token=...`) — verified live: `/api/devices` returns
+`401 {"error":"unauthorized"}` without it, `200` with it. The bare HTML
+shell itself loads either way.
 
 **Honest caveats:**
 
-- Default ICE servers are public STUN (Cloudflare + Google), baked into
-  tango-mirror — fine for most home/Tailscale networks. If P2P fails on a
-  stricter network (symmetric NAT/CGNAT on both ends), tango-mirror
-  supports `--turn cloudflare` for a TURN relay; this repo doesn't wire that
-  flag through yet — ask if you hit that wall.
-- Verified end-to-end in a container (build, boot, HTTP 200s, token
-  gating). **Not yet verified against real hardware** over your actual
-  Tailscale link — confirm audio actually plays once deployed.
+- Verified end-to-end against the real tablet: both services connect to
+  it independently (scrcpy-relay's own adb session plus a second
+  concurrent one from scrcpy-audio, both authenticated via the same
+  trusted key), `/api/devices` lists the real device (`SM_X210`), token
+  gating behaves correctly.
+- **ICE/WebRTC traversal through this bridge network, and actual audio
+  playback in a real browser, still need live confirmation from a real
+  client** — not something `curl`/SSH can verify. If the stream connects
+  but stays silent/stuck negotiating, that's the signal to reach for
+  `--turn`.
 - The video-only `scrcpy-relay` service is completely unaffected — this is
   an addition, not a replacement. Comment the `scrcpy-audio` service out of
   `docker-compose.yml` if you don't want it running at all.
@@ -282,7 +297,8 @@ All in `.env` (see `.env.example`):
 | `KEEPALIVE_INTERVAL` | `30` | Seconds between adb reconnect checks |
 | `BIND_HOST` | `127.0.0.1` | Host IP port 8000 is published on — set to your Tailscale IP |
 | `TANGO_PORT` | `8010` | Port the audio sidecar (`scrcpy-audio`, tango-mirror) listens on — see *Audio* |
-| `TANGO_TOKEN` | — (required) | Gates the audio sidecar's device list/stream — required because that service runs with `network_mode: host` |
+| `TANGO_TOKEN` | _(blank)_ | Recommended: gates the audio sidecar's device list/stream (`?token=...`) |
+| `SCRCPY_AUDIO_HOSTNAME` | `scrcpy-audio.example.com` | Hostname Traefik routes to the audio sidecar (Traefik users only) |
 | `IMAGE_TAG` | `latest` | Tag pulled from `ghcr.io/the-code-labz/scrcpy-tablet-relay` |
 | `SCRCPY_HOSTNAME` | `scrcpy.example.com` | Hostname Traefik routes to this service (Traefik users only) |
 | `TRAEFIK_NETWORK` | `dokploy-network` | Docker network your Traefik instance watches (Traefik users only) |
@@ -314,7 +330,7 @@ external `traefik-network` (named via `TRAEFIK_NETWORK`, default
 Dockerfile              Node 20 + adb + nmap + ws-scrcpy build + tango-mirror (audio sidecar)
 entrypoint.sh           pair → connect (cache/pin/nmap-discover port) → 30s keepalive loop → ws-scrcpy on :8000
 entrypoint-audio.sh     reads the port scrcpy-relay already discovered/cached → own adb session → tango-mirror on :8010
-docker-compose.yml      scrcpy-relay (bridge, BIND_HOST/Traefik) + scrcpy-audio (network_mode: host, TANGO_TOKEN-gated)
+docker-compose.yml      scrcpy-relay + scrcpy-audio, both bridge network + BIND_HOST/Traefik
 .env.example            configuration template
 docker/webclient/       build-time overlay on ws-scrcpy: PWA app shell
                         (manifest/service-worker/icons/install-banner),
