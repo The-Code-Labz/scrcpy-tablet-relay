@@ -24,6 +24,15 @@ PORT_DISCOVERY="${ADB_PORT_DISCOVERY:-auto}"          # auto | off
 DISCOVERY_PORT_RANGE="${DISCOVERY_PORT_RANGE:-32768-61000}"  # covers every Wireless Debugging connect port observed in practice
 PORT_CACHE_FILE="${PORT_CACHE_FILE:-$HOME/.android/relay_last_port}"
 mkdir -p "$(dirname "${PORT_CACHE_FILE}")" 2>/dev/null || true
+# ws-scrcpy's /relay-api (the web UI's pair/reconnect/QR endpoints — see
+# RelayApi.ts) runs inside the same `node dist/index.js` process started
+# below and needs this same cache path and target host/port to stay in
+# sync with this script's own discovery. Variables already present in the
+# container's initial environment (TABLET_HOST, TABLET_PORT, via `docker
+# compose environment:`) are exported automatically; PORT_CACHE_FILE's
+# default is computed here in bash, so it needs an explicit export or the
+# Node child process backgrounded further down would never see it.
+export TABLET_HOST TABLET_PORT PORT_CACHE_FILE
 
 echo "[relay] target: ${TABLET_HOST} (port discovery: ${PORT_DISCOVERY})"
 echo "[relay] keepalive every ${KEEPALIVE_INTERVAL}s"

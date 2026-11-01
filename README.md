@@ -38,7 +38,10 @@ no per-session setup.
    6-digit code (expires in ~60s). Put the ip/port in `PAIR_HOST`/`PAIR_PORT` and the
    code in `PAIR_CODE` in `.env`, then `docker compose up -d` immediately. Check
    `docker compose logs` for `Successfully paired`, then blank `PAIR_*` back out — the
-   trust persists in `./adb-data` and survives redeploys/reboots.
+   trust persists in `./adb-data` and survives redeploys/reboots. (This first pairing
+   still needs `.env` + a redeploy since nothing is listening yet; every pairing
+   *after* this one — see *Reconnecting from the web UI*, below — can be done straight
+   from the browser, no shell/redeploy needed.)
 4. That's it — you do **not** need to read or pin any port. Wireless Debugging's
    *connect* port (shown on the main Wireless debugging screen, separate from the
    pairing screen) rotates on every Wi-Fi reconnect/reboot/toggle; the relay
@@ -142,13 +145,46 @@ its own link/token auth, not this repo's Docker/Traefik/Tailscale model),
 so adopting it means replacing this relay, not patching it. Ask if you want
 that scoped as a separate project.
 
+## Reconnecting from the web UI
+
+Port rotation (the tablet's Wireless Debugging connect port changing on
+every Wi-Fi reconnect/reboot) is already self-healed by entrypoint.sh's
+keepalive loop — you should never need to do anything for that. What it
+*can't* fix is **trust loss**: if the tablet revokes its adb pairing (toggling
+Wireless debugging off/on, "Revoke wireless debugging authorizations", a
+factory reset, etc.), every connect attempt reports `offline` forever until
+someone re-pairs. Previously that meant shelling into the container and
+running `adb pair` by hand. Now there's a **Reconnect** button (bottom-right
+of the web UI, on every page) that does it from the browser:
+
+- **Port + Code tab** — mirrors `Settings → Developer options → Wireless
+  debugging → Pair device with pairing code` on the tablet: type the host,
+  the pairing port and the 6-digit code it shows, hit **Pair & Connect**.
+  This always works as long as you can reach the tablet's pairing port from
+  the relay container (same as the one-time setup in step 1, just without
+  needing `.env`/a redeploy).
+- **QR Code tab** — mirrors `Pair device with QR code`: the browser shows a
+  QR code, you scan it on the tablet, and the relay watches for the
+  resulting mDNS pairing broadcast and pairs automatically. **This needs
+  mDNS multicast from the tablet to actually reach the container** — true on
+  a shared LAN or `network_mode: host`, generally **not** true over a
+  Tailscale-only hop (Tailscale doesn't relay multicast). It times out with
+  a clear message after 90s if nothing shows up — use Port + Code instead
+  when that happens.
+
+Either flow only needs to re-establish trust once; the keepalive loop takes
+it from there (within `KEEPALIVE_INTERVAL` seconds) even if the immediate
+reconnect attempt misses. The backing API lives at `/relay-api/*` on the same
+port 8000 — no extra ports or firewall rules needed, it rides through
+`BIND_HOST`/Traefik exactly like the stream itself.
+
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | `adb connect` hangs / "unable to connect" | Check Wireless debugging is still ON on the tablet. If it is, `docker compose logs` should show `[relay] port discovery: scanning...` self-healing it within ~60s — if discovery also fails, pairing has likely gone stale (see below) |
-| Port discovery finds nothing / scan comes up empty | Pairing trust was lost (factory reset, "Revoke wireless debugging authorizations", or `./adb-data` volume wiped) — re-run the `PAIR_*` one-time pairing step |
-| Shows `unauthorized` | Pairing trust lost — re-run the `PAIR_*` one-time pairing step (see *One-time tablet setup*) |
+| Port discovery finds nothing / scan comes up empty | Pairing trust was lost (factory reset, "Revoke wireless debugging authorizations", or `./adb-data` volume wiped) — use the **Reconnect** button in the web UI (Port + Code or QR tab), or re-run the `PAIR_*` one-time pairing step |
+| Shows `unauthorized` | Pairing trust lost — use the **Reconnect** button in the web UI, or re-run the `PAIR_*` one-time pairing step (see *One-time tablet setup*) |
 | Works, then drops after tablet reboot/Wi-Fi flap | Normal — the keepalive loop reconnects within `KEEPALIVE_INTERVAL` seconds, re-discovering the connect port if it rotated |
 | Tablet IP changed | Use a DHCP reservation, or set `TABLET_HOST` to the tablet's **Tailscale hostname** (stable) and install Tailscale on the tablet |
 | ws-scrcpy page is empty / no device | Check `docker compose logs` — adb must show the device as `device`, not `offline`/`unauthorized`; look for `[relay] port discovery` lines to see if a scan is in progress or failing |
@@ -224,6 +260,8 @@ entrypoint.sh           pair → connect (cache/pin/nmap-discover port) → 30s 
 docker-compose.yml      restart: unless-stopped; BIND_HOST direct publish + optional Traefik labels
 .env.example            configuration template
 docker/webclient/       build-time overlay on ws-scrcpy: PWA app shell
-                        (manifest/service-worker/icons) + mobile/touch CSS,
-                        applied before `npm run dist` in the Dockerfile
+                        (manifest/service-worker/icons), mobile/touch CSS,
+                        the Reconnect widget (pair/connect/QR UI), and the
+                        /relay-api server routes backing it — all applied
+                        before `npm run dist` in the Dockerfile
 ```
