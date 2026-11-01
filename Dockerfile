@@ -55,6 +55,7 @@ RUN git clone --depth 1 --branch "${WSSCRCPY_REF}" https://github.com/NetrisTV/w
     && cp /tmp/webclient/patches/index.html src/public/index.html \
     && cat /tmp/webclient/patches/mobile.css >> src/style/app.css \
     && cat /tmp/webclient/patches/relay-ui.css >> src/style/app.css \
+    && cat /tmp/webclient/patches/pwa-install.css >> src/style/app.css \
     && sed -i \
          -e 's/bitrate: 524288,/bitrate: 8000000,/' \
          -e 's/maxFps: 24,/maxFps: 60,/' \
@@ -76,15 +77,44 @@ RUN git clone --depth 1 --branch "${WSSCRCPY_REF}" https://github.com/NetrisTV/w
     && cp /tmp/webclient/pwa-assets/icon-192.png dist/public/icon-192.png \
     && cp /tmp/webclient/pwa-assets/icon-512.png dist/public/icon-512.png \
     && cp /tmp/webclient/pwa-assets/relay-ui.js dist/public/relay-ui.js \
+    && cp /tmp/webclient/pwa-assets/pwa-install.js dist/public/pwa-install.js \
     && npm cache clean --force \
     && rm -rf /tmp/webclient
 
 WORKDIR /opt/ws-scrcpy
 
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# ---- tango-mirror (audio sidecar) ----
+# ws-scrcpy's vendored scrcpy-server predates scrcpy's audio protocol
+# (scrcpy 2.0+). tango-mirror pushes the current stock scrcpy v3.1 server
+# and streams video+Opus audio+touch over WebRTC instead — a separate
+# process (see entrypoint-audio.sh / docker-compose.yml `scrcpy-audio`
+# service), reusing this same image and the adb trust/connection this
+# stage already sets up. Pinned version: npm ships it with a prebuilt
+# public/app.js and scrcpy-server.bin already, no extra build step needed.
+ARG TANGO_MIRROR_VERSION=0.6.0
+COPY docker/tango-pwa /tmp/tango-pwa
+RUN mkdir -p /opt/tango-mirror && cd /opt/tango-mirror \
+    && npm install --no-save --omit=dev "tango-mirror@${TANGO_MIRROR_VERSION}" \
+    && cd node_modules/tango-mirror \
+    && sed -i "/<title>tango-mirror<\/title>/r /tmp/tango-pwa/head-snippet.html" public/index.html \
+    && sed -i "/<body>/r /tmp/tango-pwa/body-snippet.html" public/index.html \
+    && cp /tmp/tango-pwa/manifest.webmanifest public/manifest.webmanifest \
+    && cp /tmp/tango-pwa/sw.js public/sw.js \
+    && npm cache clean --force \
+    && rm -rf /tmp/tango-pwa
 
-# ws-scrcpy default web port
-EXPOSE 8000
+# icon-192/512.png live in the ws-scrcpy stage above (webclient dir already
+# removed by then) — copy them into tango-mirror's public dir from the
+# original build-context path instead of the (now-deleted) /tmp/webclient.
+COPY docker/webclient/pwa-assets/icon-192.png docker/webclient/pwa-assets/icon-512.png \
+     docker/webclient/patches/pwa-install.css \
+     /opt/tango-mirror/node_modules/tango-mirror/public/
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY entrypoint-audio.sh /usr/local/bin/entrypoint-audio.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/entrypoint-audio.sh
+
+# ws-scrcpy default web port; tango-mirror audio sidecar port
+EXPOSE 8000 8010
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

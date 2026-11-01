@@ -16,7 +16,9 @@ no per-session setup.
 
 * **Real touch injection** — scrcpy's native multitouch protocol, not VNC mouse emulation.
   Scrolling, pinch, long-press, and app gestures work like they do in your hand.
-* **No audio** — this relay has no audio pipeline at all; see *Audio caveats* below.
+* **Audio, optionally** — the main relay (ws-scrcpy) has no audio pipeline at
+  all; a separate `scrcpy-audio` sidecar (tango-mirror, WebRTC + Opus) adds
+  it — see *Audio* below.
 * **Screen can stay off** — toggle "Set screen power mode" in the in-stream
   settings panel to turn the tablet's physical display off while mirroring/
   touch control keep working; see *Keeping the screen off* below.
@@ -116,34 +118,73 @@ Caveats, confirmed by testing:
 
 ---
 
-## Audio caveats (no audio, on any client)
+## Audio (separate `scrcpy-audio` service)
 
-This relay has **no audio support at all** — not a browser-decode limitation,
-a missing feature. The web client (`NetrisTV/ws-scrcpy`), even on current
-upstream `master`, vendors a `scrcpy-server.jar` with **zero audio-related
+The main `scrcpy-relay` service (`ws-scrcpy`) has **no audio support at
+all** — not a browser-decode limitation, a missing feature. Even on current
+upstream `master` it vendors a `scrcpy-server.jar` with **zero audio-related
 classes or resources inside it** (checked by listing the jar's contents,
-not just string-matching) — there is no server-side audio capture path, and
-the TypeScript client has no audio decoder/player to go with it either way.
-Tracked upstream at [ws-scrcpy#38](https://github.com/NetrisTV/ws-scrcpy/discussions/38),
-still an open research discussion, not a shipped feature.
+not just string-matching). That part of this README used to stop there and
+recommend working around it; it no longer has to.
 
-Workarounds:
+A second, optional Docker service — `scrcpy-audio` — runs
+[`tiann/tango-mirror`](https://github.com/tiann/tango-mirror) (MIT), which
+pushes the **stock, current scrcpy v3.1 server** to the device and streams
+screen + **Opus audio** + touch over WebRTC straight to any browser, no
+transcoding. It's a genuinely different stack under the hood (Node +
+WebRTC, its own page), but it's wired into this repo as a sibling service
+in the same `docker-compose.yml`, reusing the same image, the same
+`./adb-data` adb trust, and the same live Wireless Debugging port that
+`scrcpy-relay`'s entrypoint already discovers — so there's no second
+pairing dance to do.
 
-1. Play audio natively on the tablet (it stays audible on-device through its
-   own speakers/Bluetooth) while the relay only mirrors video + input.
-2. Casting the tablet's audio separately (e.g. a local Bluetooth speaker near
-   the tablet) if you need it audible where the relay client is.
+**Setup:**
 
-Fixing this for real means swapping the underlying relay technology, not
-patching this one — `ws-scrcpy`'s architecture has no audio code path to
-extend. A real option exists:
-[`tiann/tango-mirror`](https://github.com/tiann/tango-mirror) (MIT) pushes
-the **stock, current scrcpy v3.1 server** to the device and streams
-screen + Opus audio + touch over WebRTC straight to any browser, no
-transcoding. It's a different stack top to bottom (Node CLI + WebRTC +
-its own link/token auth, not this repo's Docker/Traefik/Tailscale model),
-so adopting it means replacing this relay, not patching it. Ask if you want
-that scoped as a separate project.
+1. Set `TANGO_TOKEN` in `.env` (required — see why below) and optionally
+   `TANGO_PORT` (default `8010`).
+2. `docker compose up -d` — both services start together.
+3. Open `http://<host>:8010/?token=<TANGO_TOKEN>`. Pick the tablet from the
+   device dropdown; tap the 🔇 icon to unmute audio (autoplay policies
+   block sound until a user gesture).
+
+**Why this needs its own HTTPS entry.** WebRTC/WebCodecs require a secure
+context — `https://` or `localhost`, nothing else. This service does **not**
+ride through the existing Traefik router/`BIND_HOST:8000` setup (different
+port, different container network mode — see below), so you need a second
+way to reach it over HTTPS. The cleanest option if the relay host already
+runs Tailscale: `tailscale serve --bg --https=8010 http://127.0.0.1:8010`
+gives you a real cert at `https://<host>.<tailnet>.ts.net:8010`, reachable
+tailnet-wide and nowhere else, with zero extra infrastructure. Plain
+Traefik routing also works if you point a router at the host's IP:8010
+directly (it's not Docker-network-discoverable since the container runs in
+`network_mode: host` — see below).
+
+**Why `network_mode: host`, and why `TANGO_TOKEN` is not optional.**
+WebRTC's media (UDP/ICE) needs the browser to reach whatever port the OS
+hands out for that session — tango-mirror exposes no flag to pin that
+range, so Docker's normal bridge-network NAT (which only forwards ports you
+explicitly publish) would silently drop the media stream. Host networking
+is the fix, but it means this port is reachable on **every interface the
+host has**, not just the tailnet — a materially bigger exposure than the
+main relay's `BIND_HOST` pattern. `TANGO_TOKEN` is required (no default) to
+compensate: tango-mirror gates the device list and stream behind it
+(`?token=...`), though the bare HTML shell itself still loads for anyone —
+verified live: `/api/devices` returns `401 {"error":"unauthorized"}`
+without the token, `200` with it.
+
+**Honest caveats:**
+
+- Default ICE servers are public STUN (Cloudflare + Google), baked into
+  tango-mirror — fine for most home/Tailscale networks. If P2P fails on a
+  stricter network (symmetric NAT/CGNAT on both ends), tango-mirror
+  supports `--turn cloudflare` for a TURN relay; this repo doesn't wire that
+  flag through yet — ask if you hit that wall.
+- Verified end-to-end in a container (build, boot, HTTP 200s, token
+  gating). **Not yet verified against real hardware** over your actual
+  Tailscale link — confirm audio actually plays once deployed.
+- The video-only `scrcpy-relay` service is completely unaffected — this is
+  an addition, not a replacement. Comment the `scrcpy-audio` service out of
+  `docker-compose.yml` if you don't want it running at all.
 
 ## Reconnecting from the web UI
 
@@ -189,24 +230,37 @@ port 8000 — no extra ports or firewall rules needed, it rides through
 | Tablet IP changed | Use a DHCP reservation, or set `TABLET_HOST` to the tablet's **Tailscale hostname** (stable) and install Tailscale on the tablet |
 | ws-scrcpy page is empty / no device | Check `docker compose logs` — adb must show the device as `device`, not `offline`/`unauthorized`; look for `[relay] port discovery` lines to see if a scan is in progress or failing |
 | Laggy video | ws-scrcpy has no server-side bitrate flags/env vars. The image now ships higher default quality (MSE player: 16 Mbps / up to 1600px; WebCodecs player: 8 Mbps / up to 1600px / 60 fps, up from upstream's 512 kbps–7.3 Mbps 480–720px defaults) — if it's still laggy, your network is the bottleneck, not the defaults. You can still click the gear/**Configure stream** button next to the tablet *before* connecting to tune **Bitrate** / **Max size** per session |
-| No audio | Expected — see *Audio caveats*. This relay has no audio pipeline at all, on any client |
+| No audio | Expected on `scrcpy-relay` (:8000) — it has no audio pipeline at all. Use the separate `scrcpy-audio` service (:8010, tango-mirror) instead — see *Audio* |
+| No "Install" banner shown | Already dismissed (14-day local cooldown) or already installed (banner never shows in standalone mode) — clear site data to reset, or just use the browser's native Add to Home Screen / install menu directly |
 | Screen won't stay off / keeps waking | That's the tablet's own lock timeout firing, not the relay — see *Keeping the screen off*, and make sure "Stay awake while charging" is ON |
 
 ## PWA / "Add to Home Screen" behavior
 
-The image now ships a real app shell: `manifest.webmanifest`, a minimal
-service worker, and app icons, all generated at build time and served from
-the ws-scrcpy static root (`/manifest.webmanifest`, `/sw.js`, `/icon-*.png`).
+The image ships a real app shell on **both** services: `manifest.webmanifest`,
+a minimal service worker, and app icons, generated at build time and served
+from each app's static root (`/manifest.webmanifest`, `/sw.js`,
+`/icon-*.png`). On top of that, both pages now show an explicit install
+banner (`pwa-install.js`) — the manifest/service-worker alone only make the
+app *installable*, they don't make either browser tell anyone that:
 
-* **iPhone (Safari):** Share → **Add to Home Screen** installs it as a
-  standalone app (no Safari chrome), with the app icon and a
-  `black-translucent` status bar, honoring the notch/home-indicator safe
-  areas.
-* **Android (Chrome):** gets an install prompt / "Install app" menu entry.
+* **iPhone (Safari) never shows an automatic install prompt — ever.** That's
+  an Apple platform limitation, not a bug or something a manifest/SW can
+  change. The banner detects iOS Safari (and that the app isn't already
+  running standalone) and shows: *"Install this app: tap the Share icon,
+  then Add to Home Screen."* Doing that installs it as a standalone app (no
+  Safari chrome), with the app icon and a `black-translucent` status bar,
+  honoring the notch/home-indicator safe areas.
+* **Android (Chrome)** fires a real `beforeinstallprompt` event, which the
+  banner now captures and turns into a visible **Install** button instead
+  of relying on the easy-to-miss address-bar icon. Tapping it calls the
+  browser's own install prompt.
+* The banner is dismissible (×) and stays hidden for 14 days per-device
+  after dismissal (`localStorage`), and never shows at all once the app is
+  already running in standalone/installed mode.
 * The service worker only caches the HTML shell for offline opening — it
   deliberately never touches the video/control WebSocket traffic
-  (`?action=proxy-adb&...`), so there's no risk of it serving stale/cached
-  stream data.
+  (`ws-scrcpy`: `?action=proxy-adb&...`; `tango-mirror`: `/api/*`), so
+  there's no risk of it serving stale/cached stream data.
 * Touch targets (toolbox buttons, device list rows, dialog buttons) are
   enlarged to ≥44px on coarse-pointer (touch) devices, and the stream/touch
   surface disables text-selection callouts and rubber-band scrolling so it
@@ -227,6 +281,8 @@ All in `.env` (see `.env.example`):
 | `PAIR_HOST` / `PAIR_PORT` / `PAIR_CODE` | _(blank)_ | One-time Wireless debugging pairing — set from the tablet's pairing screen, redeploy once, blank out again |
 | `KEEPALIVE_INTERVAL` | `30` | Seconds between adb reconnect checks |
 | `BIND_HOST` | `127.0.0.1` | Host IP port 8000 is published on — set to your Tailscale IP |
+| `TANGO_PORT` | `8010` | Port the audio sidecar (`scrcpy-audio`, tango-mirror) listens on — see *Audio* |
+| `TANGO_TOKEN` | — (required) | Gates the audio sidecar's device list/stream — required because that service runs with `network_mode: host` |
 | `IMAGE_TAG` | `latest` | Tag pulled from `ghcr.io/the-code-labz/scrcpy-tablet-relay` |
 | `SCRCPY_HOSTNAME` | `scrcpy.example.com` | Hostname Traefik routes to this service (Traefik users only) |
 | `TRAEFIK_NETWORK` | `dokploy-network` | Docker network your Traefik instance watches (Traefik users only) |
@@ -255,13 +311,17 @@ external `traefik-network` (named via `TRAEFIK_NETWORK`, default
 ## Files
 
 ```
-Dockerfile              Node 20 + adb + nmap + ws-scrcpy build
+Dockerfile              Node 20 + adb + nmap + ws-scrcpy build + tango-mirror (audio sidecar)
 entrypoint.sh           pair → connect (cache/pin/nmap-discover port) → 30s keepalive loop → ws-scrcpy on :8000
-docker-compose.yml      restart: unless-stopped; BIND_HOST direct publish + optional Traefik labels
+entrypoint-audio.sh     reads the port scrcpy-relay already discovered/cached → own adb session → tango-mirror on :8010
+docker-compose.yml      scrcpy-relay (bridge, BIND_HOST/Traefik) + scrcpy-audio (network_mode: host, TANGO_TOKEN-gated)
 .env.example            configuration template
 docker/webclient/       build-time overlay on ws-scrcpy: PWA app shell
-                        (manifest/service-worker/icons), mobile/touch CSS,
-                        the Reconnect widget (pair/connect/QR UI), and the
-                        /relay-api server routes backing it — all applied
-                        before `npm run dist` in the Dockerfile
+                        (manifest/service-worker/icons/install-banner),
+                        mobile/touch CSS, the Reconnect widget
+                        (pair/connect/QR UI), and the /relay-api server
+                        routes backing it — all applied before
+                        `npm run dist` in the Dockerfile
+docker/tango-pwa/       same PWA app-shell treatment, applied to
+                        tango-mirror's bundled page instead
 ```
