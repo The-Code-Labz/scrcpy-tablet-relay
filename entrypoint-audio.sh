@@ -18,18 +18,25 @@
 # clients against one trusted key, so this doesn't interfere with
 # scrcpy-relay's own connection.
 #
-# Runs with `network_mode: host` (see docker-compose.yml) because WebRTC's
-# media (UDP, ICE) needs direct host-port reachability that Docker's bridge
-# NAT does not provide for ephemeral/unpublished ports, and tango-mirror
-# exposes no CLI flag to pin its ICE port range. TANGO_TOKEN is therefore
-# REQUIRED (not optional) — unlike ws-scrcpy, host networking here would
-# otherwise mean an unauthenticated screen+audio+touch session reachable
-# from every interface the host has, not just the tailnet.
+# Runs on the SAME bridge network + Traefik wiring as scrcpy-relay (not
+# network_mode: host — tried that first; on a hardened host it means
+# Traefik's own container can't reach this one's host-bound port at all,
+# since this kind of host blocks container-to-unpublished-host-port
+# traffic by design, and the fix would otherwise poke a hole through that
+# intentional hardening). WebRTC's ICE candidates still negotiate fine
+# through ordinary Docker bridge NAT for most networks — it behaves like
+# any address/port-restricted-cone NAT, which is exactly what STUN is
+# for. Only a genuinely symmetric NAT on the viewer's side would defeat
+# it, in which case tango-mirror's `--turn` flag is the next step (not
+# wired through this repo yet).
 
 set -u
 
 TABLET_HOST="${TABLET_HOST:?TABLET_HOST is required (tablet IP or Tailscale hostname)}"
-TANGO_TOKEN="${TANGO_TOKEN:?TANGO_TOKEN is required — host networking means this port is reachable beyond the tailnet without it}"
+TANGO_TOKEN="${TANGO_TOKEN:-}"
+if [ -z "${TANGO_TOKEN}" ]; then
+  echo "[audio] WARNING: TANGO_TOKEN is not set — the device list/stream are unauthenticated for anyone who can reach this service (mesh-only via Traefik's ipallowlist, same as scrcpy-relay, but still worth setting)"
+fi
 TANGO_PORT="${TANGO_PORT:-8010}"
 KEEPALIVE_INTERVAL="${KEEPALIVE_INTERVAL:-30}"
 PORT_CACHE_FILE="${PORT_CACHE_FILE:-$HOME/.android/relay_last_port}"
@@ -70,13 +77,9 @@ connect_tablet || echo "[audio] initial connect failed — keepalive will keep r
 KEEPALIVE_PID=$!
 
 echo "[audio] starting tango-mirror on :${TANGO_PORT}"
-node /opt/tango-mirror/node_modules/tango-mirror/server.mjs \
-  --port "${TANGO_PORT}" \
-  --no-signal \
-  --no-page \
-  --adb-host 127.0.0.1 \
-  --adb-port 5037 \
-  --token "${TANGO_TOKEN}" &
+TANGO_ARGS=(--port "${TANGO_PORT}" --no-signal --no-page --adb-host 127.0.0.1 --adb-port 5037)
+[ -n "${TANGO_TOKEN}" ] && TANGO_ARGS+=(--token "${TANGO_TOKEN}")
+node /opt/tango-mirror/node_modules/tango-mirror/server.mjs "${TANGO_ARGS[@]}" &
 TANGO_PID=$!
 wait "${TANGO_PID}"
 cleanup

@@ -84,30 +84,32 @@ services:
   # ws-scrcpy's vendored scrcpy-server predates scrcpy's audio protocol, so
   # the main service above is video+touch only. This runs tango-mirror
   # instead (stock scrcpy v3.1, WebRTC video + Opus audio + touch) as a
-  # SEPARATE service so the main relay's security posture (bridge network,
-  # BIND_HOST-gated) is untouched. It needs `network_mode: host` because
-  # WebRTC's media (UDP/ICE) needs direct host-port reachability that
-  # Docker's bridge NAT doesn't provide for ports tango-mirror doesn't let
-  # us pin ahead of time. Comment this whole service out if you don't need
-  # audio — the video-only relay above works completely independently.
+  # SEPARATE service, on the SAME bridge network + Traefik pattern as
+  # scrcpy-relay above (NOT network_mode: host — that needs Traefik to
+  # reach a raw host-bound port, which many hardened hosts firewall off
+  # for container-originated traffic; this way Traefik discovers it the
+  # normal Docker-network way, identical to scrcpy-relay). WebRTC's ICE
+  # still negotiates fine through ordinary Docker bridge NAT for most
+  # networks (STUN handles cone NATs, which is what this is) — only a
+  # genuinely symmetric NAT on the viewer's side would need TURN (see
+  # README). Comment this whole service out if you don't need audio — the
+  # video-only relay above works completely independently.
   scrcpy-audio:
     image: ghcr.io/the-code-labz/scrcpy-tablet-relay:${IMAGE_TAG:-latest}
     # build: .
     container_name: scrcpy-audio
     entrypoint: ["/usr/local/bin/entrypoint-audio.sh"]
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${TANGO_PORT:-8010}:${TANGO_PORT:-8010}"
     environment:
       - TABLET_HOST=${TABLET_HOST:?Set TABLET_HOST in .env}
       - TABLET_PORT=${TABLET_PORT:-}
       - TANGO_PORT=${TANGO_PORT:-8010}
-      # Required by entrypoint-audio.sh itself (not enforced here with
-      # `:?` — doing that at the compose level would fail interpolation
-      # for the WHOLE file, including scrcpy-relay, the moment this is
-      # unset). network_mode: host means this port is reachable on every
-      # interface the host has, not just the tailnet, so the container
-      # refuses to start tango-mirror without a token rather than booting
-      # unauthenticated.
+      # Recommended but not required (entrypoint-audio.sh warns if unset).
+      # Not security-critical the way host networking would have made it:
+      # this service is only reachable via Traefik (mesh-gated, same
+      # ipallowlist pattern as scrcpy-relay) or BIND_HOST, same as above.
       - TANGO_TOKEN=${TANGO_TOKEN:-}
       - KEEPALIVE_INTERVAL=${KEEPALIVE_INTERVAL:-30}
     volumes:
@@ -116,6 +118,18 @@ services:
       # entrypoint.sh discovers/caches, so this sidecar never needs its own
       # pairing step or port-discovery scan.
       - ./adb-data:/root/.android
+    networks:
+      - default
+      - traefik-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK:-dokploy-network}"
+      - "traefik.http.routers.scrcpy-audio.rule=Host(`${SCRCPY_AUDIO_HOSTNAME:-scrcpy-audio.example.com}`)"
+      - "traefik.http.routers.scrcpy-audio.entrypoints=websecure"
+      - "traefik.http.routers.scrcpy-audio.tls=true"
+      - "traefik.http.routers.scrcpy-audio.tls.certresolver=${TRAEFIK_CERTRESOLVER:-cloudflare}"
+      - "traefik.http.routers.scrcpy-audio.service=scrcpy-audio"
+      - "traefik.http.services.scrcpy-audio.loadbalancer.server.port=${TANGO_PORT:-8010}"
     depends_on:
       - scrcpy-relay
 
