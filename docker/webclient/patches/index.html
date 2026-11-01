@@ -26,5 +26,187 @@
         });
     }
 </script>
+
+<!-- Reconnect widget: re-pair/re-connect adb from the browser when the
+     tablet revokes trust (port rotation alone is already self-healed by
+     entrypoint.sh's keepalive loop). Self-contained vanilla JS so it
+     doesn't depend on ws-scrcpy's internal TS/DOM structure and survives
+     upstream updates. See RelayApi.ts for the server side. -->
+<button id="relay-reconnect-fab" class="relay-reconnect-fab" type="button" title="Reconnect tablet" aria-label="Reconnect tablet">
+    <span class="relay-fab-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M7 2.75h10A2.25 2.25 0 0 1 19.25 5v14A2.25 2.25 0 0 1 17 21.25H7A2.25 2.25 0 0 1 4.75 19V5A2.25 2.25 0 0 1 7 2.75Z"/>
+            <path d="M9.25 5.75h5.5M10.75 18.25h2.5"/>
+        </svg>
+        <span id="relay-reconnect-dot" class="relay-dot relay-dot-unknown"></span>
+    </span>
+    <span class="relay-fab-copy">
+        <span class="relay-fab-label">Reconnect</span>
+        <span class="relay-fab-meta" aria-hidden="true">Tablet relay</span>
+    </span>
+    <svg class="relay-fab-arrow" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+        <path d="m7.5 5 5 5-5 5"/>
+    </svg>
+</button>
+
+<div id="relay-reconnect-modal" class="relay-modal-overlay" hidden>
+    <div class="relay-modal" role="dialog" aria-modal="true" aria-labelledby="relay-modal-title" aria-describedby="relay-modal-description">
+        <div class="relay-modal-header">
+            <div class="relay-modal-heading">
+                <span class="relay-modal-device" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" focusable="false">
+                        <path d="M7 2.75h10A2.25 2.25 0 0 1 19.25 5v14A2.25 2.25 0 0 1 17 21.25H7A2.25 2.25 0 0 1 4.75 19V5A2.25 2.25 0 0 1 7 2.75Z"/>
+                        <path d="M10 18.25h4"/>
+                    </svg>
+                </span>
+                <span>
+                    <span class="relay-eyebrow">Wireless ADB</span>
+                    <h2 id="relay-modal-title">Reconnect tablet</h2>
+                    <span id="relay-modal-description" class="relay-modal-description">Pair the tablet with this relay, then resume the screen session.</span>
+                </span>
+            </div>
+            <button type="button" id="relay-modal-close" class="relay-icon-btn" aria-label="Close">
+                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                    <path d="m5 5 10 10M15 5 5 15"/>
+                </svg>
+            </button>
+        </div>
+
+        <div class="relay-tabs" role="tablist" aria-label="Pairing method">
+            <button type="button" id="relay-tab-code" class="relay-tab active" data-tab="code" role="tab" aria-selected="true" aria-controls="relay-panel-code">
+                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                    <path d="M6.75 7.25 4 10l2.75 2.75M13.25 7.25 16 10l-2.75 2.75M11.75 5.75l-3.5 8.5"/>
+                </svg>
+                <span>Port + Code</span>
+            </button>
+            <button type="button" id="relay-tab-qr" class="relay-tab" data-tab="qr" role="tab" aria-selected="false" aria-controls="relay-panel-qr">
+                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                    <path d="M3.5 3.5h5v5h-5zM11.5 3.5h5v5h-5zM3.5 11.5h5v5h-5z"/>
+                    <path d="M12 12h1.5v1.5H12zM15 12h1.5v4.5H12V15h3z"/>
+                </svg>
+                <span>QR Code</span>
+            </button>
+        </div>
+
+        <section id="relay-panel-code" class="relay-tab-panel" data-panel="code" role="tabpanel" aria-labelledby="relay-tab-code">
+            <div class="relay-instruction">
+                <span class="relay-instruction-icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20" focusable="false">
+                        <path d="M10 17.25A7.25 7.25 0 1 0 10 2.75a7.25 7.25 0 0 0 0 14.5Z"/>
+                        <path d="M10 9v4M10 6.5v.1"/>
+                    </svg>
+                </span>
+                <p class="relay-hint">On the tablet, open <strong>Settings</strong> → <strong>Developer options</strong> → <strong>Wireless debugging</strong>, then choose <strong>Pair device with pairing code</strong>.</p>
+            </div>
+
+            <div class="relay-form-grid">
+                <label class="relay-field relay-field-host">
+                    <span class="relay-field-label">Tablet host</span>
+                    <span class="relay-input-shell">
+                        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                            <path d="M3.25 6.25h13.5v8.5H3.25zM6 14.75v2M14 14.75v2M5 17h10"/>
+                            <path d="M6.5 9.25h.1M9.25 9.25h.1"/>
+                        </svg>
+                        <input id="relay-code-host" type="text" placeholder="192.168.1.50" autocomplete="off" spellcheck="false">
+                    </span>
+                </label>
+
+                <label class="relay-field">
+                    <span class="relay-field-label">Pairing port</span>
+                    <span class="relay-input-shell">
+                        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                            <path d="M6.5 3.5 5 16.5M13.5 3.5 12 16.5M3.5 8h13M3 12h13"/>
+                        </svg>
+                        <input id="relay-code-pairport" type="text" inputmode="numeric" placeholder="41933" autocomplete="off">
+                    </span>
+                </label>
+
+                <label class="relay-field">
+                    <span class="relay-field-label">6-digit code</span>
+                    <span class="relay-input-shell">
+                        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                            <path d="M6 8V6.5a4 4 0 0 1 8 0V8M4.25 8h11.5v8.5H4.25z"/>
+                            <path d="M10 11v2.5"/>
+                        </svg>
+                        <input id="relay-code-code" class="relay-code-input" type="text" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="one-time-code">
+                    </span>
+                </label>
+
+                <label class="relay-field relay-field-optional relay-field-wide">
+                    <span class="relay-field-label">Connect port <span>Optional</span></span>
+                    <span class="relay-input-shell">
+                        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                            <path d="M7.25 7.25 5.5 5.5M12.75 7.25l1.75-1.75M10 6V3.5M5.5 10H3.25"/>
+                            <path d="M6.25 9.25h7.5v5.5h-7.5zM8.25 14.75v1.75M11.75 14.75v1.75"/>
+                        </svg>
+                        <input id="relay-code-connectport" type="text" inputmode="numeric" placeholder="Auto-discovered if blank" autocomplete="off">
+                    </span>
+                    <span class="relay-field-help">Providing it can shorten future reconnects.</span>
+                </label>
+            </div>
+
+            <div class="relay-action-row">
+                <button type="button" id="relay-code-submit" class="relay-primary-btn">
+                    <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                        <path d="M3.5 10h10M10.5 6.5 14 10l-3.5 3.5"/>
+                        <path d="M13.5 3.5h3v13h-3"/>
+                    </svg>
+                    <span>Pair &amp; Connect</span>
+                </button>
+                <span class="relay-action-note">Encrypted on your local network</span>
+            </div>
+            <p id="relay-code-status" class="relay-status" role="status" aria-live="polite"></p>
+        </section>
+
+        <section id="relay-panel-qr" class="relay-tab-panel relay-tab-panel-qr" data-panel="qr" role="tabpanel" aria-labelledby="relay-tab-qr" hidden>
+            <div class="relay-instruction">
+                <span class="relay-instruction-icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20" focusable="false">
+                        <path d="M10 17.25A7.25 7.25 0 1 0 10 2.75a7.25 7.25 0 0 0 0 14.5Z"/>
+                        <path d="M10 9v4M10 6.5v.1"/>
+                    </svg>
+                </span>
+                <p class="relay-hint">On the tablet, open <strong>Wireless debugging</strong>, choose <strong>Pair device with QR code</strong>, then point the camera at this screen.</p>
+            </div>
+
+            <div id="relay-qr-wrap" class="relay-qr-wrap">
+                <div class="relay-qr-placeholder" aria-hidden="true">
+                    <span class="relay-qr-corners"></span>
+                    <svg viewBox="0 0 24 24" focusable="false">
+                        <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z"/>
+                        <path d="M15 14h2v2h-2zM18 14h2v6h-6v-2h4zM14 17h2"/>
+                    </svg>
+                    <span>Ready to generate</span>
+                </div>
+                <img id="relay-qr-img" alt="ADB pairing QR code" hidden>
+                <div class="relay-qr-actions">
+                    <button type="button" id="relay-qr-generate" class="relay-primary-btn">
+                        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                            <path d="M3.5 3.5h5v5h-5zM11.5 3.5h5v5h-5zM3.5 11.5h5v5h-5z"/>
+                            <path d="M12 12h1.5v1.5H12zM15 12h1.5v4.5H12V15h3z"/>
+                        </svg>
+                        <span>Generate QR code</span>
+                    </button>
+                    <button type="button" id="relay-qr-cancel" class="relay-secondary-btn" hidden>
+                        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                            <path d="m6 6 8 8M14 6l-8 8"/>
+                        </svg>
+                        <span>Cancel</span>
+                    </button>
+                </div>
+            </div>
+
+            <p id="relay-qr-status" class="relay-status" role="status" aria-live="polite"></p>
+            <div class="relay-network-note">
+                <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+                    <path d="M3.25 7.75a10.2 10.2 0 0 1 13.5 0M5.75 10.5a6.4 6.4 0 0 1 8.5 0M8.25 13.25a2.65 2.65 0 0 1 3.5 0M10 16h.01"/>
+                </svg>
+                <p class="relay-hint relay-hint-dim"><strong>Same-LAN connection required.</strong> QR pairing depends on mDNS multicast reaching this container. A Tailscale-only link usually times out; use <strong>Port + Code</strong> instead.</p>
+            </div>
+        </section>
+    </div>
+</div>
+
+<script src="relay-ui.js"></script>
 </body>
 </html>
