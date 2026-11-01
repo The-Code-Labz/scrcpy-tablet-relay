@@ -12,6 +12,11 @@ FROM node:20-bookworm-slim
 # key is already paired/trusted on the device, its TLS client can't
 # complete the secure-connect handshake (`adb connect` just reports
 # "offline" forever). Install the real Google platform-tools binary instead.
+#
+# nmap is used by entrypoint.sh's port-discovery fallback: Wireless
+# Debugging's connect port is an OS-assigned ephemeral port with no stable
+# mDNS path over Tailscale (see entrypoint.sh), so we bounded-scan for it
+# instead of requiring it be read off the tablet's screen by hand.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       wget \
       unzip \
@@ -20,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 \
       make \
       g++ \
+      nmap \
     && wget -q https://dl.google.com/android/repository/platform-tools-latest-linux.zip -O /tmp/pt.zip \
     && unzip -q /tmp/pt.zip -d /opt \
     && ln -s /opt/platform-tools/adb /usr/bin/adb \

@@ -25,7 +25,18 @@ services:
     environment:
       # Tablet wireless-adb endpoint (IP or Tailscale hostname)
       - TABLET_HOST=${TABLET_HOST:?Set TABLET_HOST in .env}
-      - TABLET_PORT=${TABLET_PORT:-5555}
+      # Optional: fast-path hint (last-known-good or legacy pinned `adb
+      # tcpip` port). Leave blank for Wireless Debugging — the relay
+      # auto-discovers and caches the live port itself (see
+      # ADB_PORT_DISCOVERY below).
+      - TABLET_PORT=${TABLET_PORT:-}
+      # auto (default): scan for the live Wireless Debugging connect port
+      # whenever the cached/pinned one stops working. off: only ever use
+      # TABLET_PORT, never scan (for fixed-port legacy `adb tcpip` setups).
+      - ADB_PORT_DISCOVERY=${ADB_PORT_DISCOVERY:-auto}
+      # Port range scanned during discovery — default covers every
+      # Wireless Debugging connect port observed in practice.
+      - DISCOVERY_PORT_RANGE=${DISCOVERY_PORT_RANGE:-32768-61000}
       # How often the keepalive loop re-checks/reconnects adb (seconds)
       - KEEPALIVE_INTERVAL=${KEEPALIVE_INTERVAL:-30}
       # One-time pairing (Android 11+ Wireless debugging). Fill these in from

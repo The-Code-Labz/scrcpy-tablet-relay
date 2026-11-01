@@ -5,7 +5,7 @@ fully viewable and controllable from an iPhone through a web browser, no cables,
 no per-session setup.
 
 ```
-┌──────────────┐   wireless adb (port 5555, pinned)   ┌──────────────────────┐   HTTPS/WSS   ┌────────┐
+┌──────────────┐   wireless adb (port auto-discovered) ┌──────────────────────┐   HTTPS/WSS   ┌────────┐
 │  Tab A9+     │ ──────────────────────────────────▶ │  scrcpy-relay        │ ────────────▶ │ iPhone │
 │  (apps run   │                                     │  Docker container    │               │ Safari │
 │   24/7)      │ ◀────────────────────────────────── │  adb + ws-scrcpy     │ ◀──────────── │  PWA   │
@@ -19,7 +19,8 @@ no per-session setup.
 * **Audio forwarding** — scrcpy 2.x forwards the tablet's audio (Android 13+).
   See *Audio caveats* below for web-client decode limits.
 * **Self-healing** — a keepalive loop reconnects adb every 30 s after tablet reboots,
-  Wi-Fi flaps, or relay restarts. No manual intervention.
+  Wi-Fi flaps, or relay restarts, and auto-rediscovers the Wireless Debugging connect
+  port when it rotates. No manual intervention.
 * **Tailscale-bound** — `BIND_HOST` publishes port 8000 only on the relay
   host's Tailscale IP, since ws-scrcpy has no built-in authentication.
 
@@ -30,17 +31,18 @@ no per-session setup.
 1. **Enable Developer Options**: `Settings → About tablet → Software information` →
    tap **Build number** 7 times.
 2. **Enable Wireless debugging**: `Settings → Developer options → Wireless debugging` → ON.
-3. **Pin the port (USB required, once)** — Android 11+ randomizes the wireless-debug
-   port **every session**, which would break the relay. Pin it permanently:
-   ```bash
-   # on any machine with adb:
-   adb devices                      # confirm the tablet shows over USB
-   adb tcpip 5555                   # switch to network mode, pin port 5555
-   adb connect <TABLET_IP>:5555     # confirm it works wirelessly
-   ```
-   After a tablet reboot the port stays 5555 (only the *authorization* may need
-   re-acceptance once — see Troubleshooting).
-4. **Note the tablet's IP**: `Settings → Wi-Fi → <your network>` (or give the tablet a
+   No USB cable needed at any point — pairing happens over the network too.
+3. **Pair once** — tap **Pair device with pairing code**: it shows an `ip:port` and a
+   6-digit code (expires in ~60s). Put the ip/port in `PAIR_HOST`/`PAIR_PORT` and the
+   code in `PAIR_CODE` in `.env`, then `docker compose up -d` immediately. Check
+   `docker compose logs` for `Successfully paired`, then blank `PAIR_*` back out — the
+   trust persists in `./adb-data` and survives redeploys/reboots.
+4. That's it — you do **not** need to read or pin any port. Wireless Debugging's
+   *connect* port (shown on the main Wireless debugging screen, separate from the
+   pairing screen) rotates on every Wi-Fi reconnect/reboot/toggle; the relay
+   auto-discovers it itself (see `ADB_PORT_DISCOVERY` below) instead of you reading it
+   off the tablet's screen each time.
+5. **Note the tablet's IP**: `Settings → Wi-Fi → <your network>` (or give the tablet a
    DHCP reservation / use its Tailscale IP if Tailscale is installed on it).
 
 ## 2. Deploy the relay
@@ -104,11 +106,12 @@ Confirm audio early with one short session before relying on it.
 
 | Symptom | Fix |
 |---|---|
-| `adb connect` hangs / "unable to connect" | Wireless debugging toggled off or port no longer 5555 → re-run `adb tcpip 5555` over USB once |
-| Shows `unauthorized` | On the tablet: accept the **Allow USB debugging?** RSA prompt (check "always allow") |
-| Works, then drops after tablet reboot | Authorization revoked → accept the prompt again once; the keepalive then maintains it |
+| `adb connect` hangs / "unable to connect" | Check Wireless debugging is still ON on the tablet. If it is, `docker compose logs` should show `[relay] port discovery: scanning...` self-healing it within ~60s — if discovery also fails, pairing has likely gone stale (see below) |
+| Port discovery finds nothing / scan comes up empty | Pairing trust was lost (factory reset, "Revoke wireless debugging authorizations", or `./adb-data` volume wiped) — re-run the `PAIR_*` one-time pairing step |
+| Shows `unauthorized` | Pairing trust lost — re-run the `PAIR_*` one-time pairing step (see *One-time tablet setup*) |
+| Works, then drops after tablet reboot/Wi-Fi flap | Normal — the keepalive loop reconnects within `KEEPALIVE_INTERVAL` seconds, re-discovering the connect port if it rotated |
 | Tablet IP changed | Use a DHCP reservation, or set `TABLET_HOST` to the tablet's **Tailscale hostname** (stable) and install Tailscale on the tablet |
-| ws-scrcpy page is empty / no device | Check `docker compose logs` — adb must show the device as `device`, not `offline`/`unauthorized` |
+| ws-scrcpy page is empty / no device | Check `docker compose logs` — adb must show the device as `device`, not `offline`/`unauthorized`; look for `[relay] port discovery` lines to see if a scan is in progress or failing |
 | Laggy video | ws-scrcpy has no server-side bitrate flags/env vars. On the device list page, click the gear/**Configure stream** button next to the tablet *before* connecting, and lower **Bitrate** / **Max size** there — it's a per-session, client-side (browser) setting |
 | No audio on iPhone | See *Audio caveats* — Safari WebCodecs limitation, not a relay bug |
 
@@ -125,7 +128,10 @@ All in `.env` (see `.env.example`):
 | Variable | Default | Purpose |
 |---|---|---|
 | `TABLET_HOST` | — (required) | Tablet IP or Tailscale hostname |
-| `TABLET_PORT` | `5555` | Pinned wireless-adb port |
+| `TABLET_PORT` | _(blank)_ | Optional fast-path/legacy fixed port. Leave blank for Wireless debugging — auto-discovered instead |
+| `ADB_PORT_DISCOVERY` | `auto` | `auto` scans for the live port when the known one fails; `off` disables scanning (legacy fixed-port only) |
+| `DISCOVERY_PORT_RANGE` | `32768-61000` | Port range scanned during discovery |
+| `PAIR_HOST` / `PAIR_PORT` / `PAIR_CODE` | _(blank)_ | One-time Wireless debugging pairing — set from the tablet's pairing screen, redeploy once, blank out again |
 | `KEEPALIVE_INTERVAL` | `30` | Seconds between adb reconnect checks |
 | `BIND_HOST` | `127.0.0.1` | Host IP port 8000 is published on — set to your Tailscale IP |
 | `IMAGE_TAG` | `latest` | Tag pulled from `ghcr.io/the-code-labz/scrcpy-tablet-relay` |
@@ -156,8 +162,8 @@ external `traefik-network` (named via `TRAEFIK_NETWORK`, default
 ## Files
 
 ```
-Dockerfile          Node 20 + adb + ws-scrcpy build
-entrypoint.sh       adb connect → 30s keepalive loop → ws-scrcpy on :8000
+Dockerfile          Node 20 + adb + nmap + ws-scrcpy build
+entrypoint.sh       pair → connect (cache/pin/nmap-discover port) → 30s keepalive loop → ws-scrcpy on :8000
 docker-compose.yml  restart: unless-stopped; BIND_HOST direct publish + optional Traefik labels
 .env.example        configuration template
 ```
