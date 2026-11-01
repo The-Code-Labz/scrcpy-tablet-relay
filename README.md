@@ -16,8 +16,10 @@ no per-session setup.
 
 * **Real touch injection** — scrcpy's native multitouch protocol, not VNC mouse emulation.
   Scrolling, pinch, long-press, and app gestures work like they do in your hand.
-* **Audio forwarding** — scrcpy 2.x forwards the tablet's audio (Android 13+).
-  See *Audio caveats* below for web-client decode limits.
+* **No audio** — this relay has no audio pipeline at all; see *Audio caveats* below.
+* **Screen can stay off** — toggle "Set screen power mode" in the in-stream
+  settings panel to turn the tablet's physical display off while mirroring/
+  touch control keep working; see *Keeping the screen off* below.
 * **Self-healing** — a keepalive loop reconnects adb every 30 s after tablet reboots,
   Wi-Fi flaps, or relay restarts, and auto-rediscovers the Wireless Debugging connect
   port when it rotates. No manual intervention.
@@ -79,28 +81,66 @@ Click it → live mirror with full touch control.
   `Settings → Developer options → Stay awake` (while charging) ON. Keep it on a charger.
 * **Disable battery optimization** for your hosted apps so Android doesn't kill them.
 * scrcpy keeps the screen mirrored but the tablet can run fully headless —
-  the relay stays attached even when the screen is off.
+  the relay stays attached even when the screen is off. See *Keeping the
+  screen off* below for the in-stream toggle that does this on demand.
 
 ---
 
-## Audio caveats (verify early!)
+## Keeping the screen off while mirroring
 
-scrcpy 2.x forwards Android audio (Android 13+), but **decode support depends on the
-client browser**:
+The scrcpy protocol has a dedicated `SET_SCREEN_POWER_MODE` command for this
+and ws-scrcpy already exposes it — no code change needed, it's just buried:
 
-| Client | Audio decode |
-|---|---|
-| Desktop Chrome/Edge | ✅ works (Opus via WebCodecs) |
-| iPhone Safari | ⚠️ hit-or-miss depending on iOS version — **test first** |
+1. Connect to the tablet in the browser.
+2. Open the **≡ / kebab "more" panel** in the toolbox (the settings icon
+   next to the stream, not the device-list "Configure stream" gear — that
+   one is pre-connect video settings only).
+3. Find the checkbox + **"Set screen power mode OFF/ON"** button. Leave the
+   checkbox unchecked and click the button once — it sends power-mode
+   **OFF**, which blanks the physical display while the capture pipeline
+   (and your touch input) keeps running. Check the box and click again to
+   send **ON** and light the screen back up.
 
-Fallbacks if Safari won't decode:
+Caveats, confirmed by testing:
 
-1. **Mute the stream** — control-only usage is unaffected.
-2. Use an iOS browser with fuller WebCodecs support (e.g. Orion) for audio.
-3. Play audio natively on the tablet (it stays audible on-device) while the
-   iPhone only sends input.
+* This blanks the panel only — it does **not** put the tablet to sleep.
+  If the tablet's own idle/lock timeout fires anyway (see step 4 above),
+  Android can still Doze the Wi-Fi radio on battery; keep it on a charger
+  with "Stay awake while charging" ON so the Wireless Debugging socket
+  doesn't drop.
+* The toggle is per-session — it doesn't persist across a reconnect to
+  the scrcpy stream.
 
-Confirm audio early with one short session before relying on it.
+---
+
+## Audio caveats (no audio, on any client)
+
+This relay has **no audio support at all** — not a browser-decode limitation,
+a missing feature. The web client (`NetrisTV/ws-scrcpy`), even on current
+upstream `master`, vendors a `scrcpy-server.jar` with **zero audio-related
+classes or resources inside it** (checked by listing the jar's contents,
+not just string-matching) — there is no server-side audio capture path, and
+the TypeScript client has no audio decoder/player to go with it either way.
+Tracked upstream at [ws-scrcpy#38](https://github.com/NetrisTV/ws-scrcpy/discussions/38),
+still an open research discussion, not a shipped feature.
+
+Workarounds:
+
+1. Play audio natively on the tablet (it stays audible on-device through its
+   own speakers/Bluetooth) while the relay only mirrors video + input.
+2. Casting the tablet's audio separately (e.g. a local Bluetooth speaker near
+   the tablet) if you need it audible where the relay client is.
+
+Fixing this for real means swapping the underlying relay technology, not
+patching this one — `ws-scrcpy`'s architecture has no audio code path to
+extend. A real option exists:
+[`tiann/tango-mirror`](https://github.com/tiann/tango-mirror) (MIT) pushes
+the **stock, current scrcpy v3.1 server** to the device and streams
+screen + Opus audio + touch over WebRTC straight to any browser, no
+transcoding. It's a different stack top to bottom (Node CLI + WebRTC +
+its own link/token auth, not this repo's Docker/Traefik/Tailscale model),
+so adopting it means replacing this relay, not patching it. Ask if you want
+that scoped as a separate project.
 
 ## Troubleshooting
 
@@ -112,14 +152,31 @@ Confirm audio early with one short session before relying on it.
 | Works, then drops after tablet reboot/Wi-Fi flap | Normal — the keepalive loop reconnects within `KEEPALIVE_INTERVAL` seconds, re-discovering the connect port if it rotated |
 | Tablet IP changed | Use a DHCP reservation, or set `TABLET_HOST` to the tablet's **Tailscale hostname** (stable) and install Tailscale on the tablet |
 | ws-scrcpy page is empty / no device | Check `docker compose logs` — adb must show the device as `device`, not `offline`/`unauthorized`; look for `[relay] port discovery` lines to see if a scan is in progress or failing |
-| Laggy video | ws-scrcpy has no server-side bitrate flags/env vars. On the device list page, click the gear/**Configure stream** button next to the tablet *before* connecting, and lower **Bitrate** / **Max size** there — it's a per-session, client-side (browser) setting |
-| No audio on iPhone | See *Audio caveats* — Safari WebCodecs limitation, not a relay bug |
+| Laggy video | ws-scrcpy has no server-side bitrate flags/env vars. The image now ships higher default quality (MSE player: 16 Mbps / up to 1600px; WebCodecs player: 8 Mbps / up to 1600px / 60 fps, up from upstream's 512 kbps–7.3 Mbps 480–720px defaults) — if it's still laggy, your network is the bottleneck, not the defaults. You can still click the gear/**Configure stream** button next to the tablet *before* connecting to tune **Bitrate** / **Max size** per session |
+| No audio | Expected — see *Audio caveats*. This relay has no audio pipeline at all, on any client |
+| Screen won't stay off / keeps waking | That's the tablet's own lock timeout firing, not the relay — see *Keeping the screen off*, and make sure "Stay awake while charging" is ON |
 
-## iPhone PWA behavior (known quirks)
+## PWA / "Add to Home Screen" behavior
 
-* Fullscreen standalone mode works via Add-to-Home-Screen.
-* No Wake Lock needed — the iPhone locking its own screen doesn't affect the tablet.
-* If iOS evicts the PWA from memory, reopening it reconnects in a few seconds.
+The image now ships a real app shell: `manifest.webmanifest`, a minimal
+service worker, and app icons, all generated at build time and served from
+the ws-scrcpy static root (`/manifest.webmanifest`, `/sw.js`, `/icon-*.png`).
+
+* **iPhone (Safari):** Share → **Add to Home Screen** installs it as a
+  standalone app (no Safari chrome), with the app icon and a
+  `black-translucent` status bar, honoring the notch/home-indicator safe
+  areas.
+* **Android (Chrome):** gets an install prompt / "Install app" menu entry.
+* The service worker only caches the HTML shell for offline opening — it
+  deliberately never touches the video/control WebSocket traffic
+  (`?action=proxy-adb&...`), so there's no risk of it serving stale/cached
+  stream data.
+* Touch targets (toolbox buttons, device list rows, dialog buttons) are
+  enlarged to ≥44px on coarse-pointer (touch) devices, and the stream/touch
+  surface disables text-selection callouts and rubber-band scrolling so it
+  feels like a native app rather than a web page.
+* If iOS evicts the PWA from memory, reopening it reconnects in a few
+  seconds — this is normal iOS background-tab behavior, not a relay issue.
 
 ## Configuration
 
@@ -162,8 +219,11 @@ external `traefik-network` (named via `TRAEFIK_NETWORK`, default
 ## Files
 
 ```
-Dockerfile          Node 20 + adb + nmap + ws-scrcpy build
-entrypoint.sh       pair → connect (cache/pin/nmap-discover port) → 30s keepalive loop → ws-scrcpy on :8000
-docker-compose.yml  restart: unless-stopped; BIND_HOST direct publish + optional Traefik labels
-.env.example        configuration template
+Dockerfile              Node 20 + adb + nmap + ws-scrcpy build
+entrypoint.sh           pair → connect (cache/pin/nmap-discover port) → 30s keepalive loop → ws-scrcpy on :8000
+docker-compose.yml      restart: unless-stopped; BIND_HOST direct publish + optional Traefik labels
+.env.example            configuration template
+docker/webclient/       build-time overlay on ws-scrcpy: PWA app shell
+                        (manifest/service-worker/icons) + mobile/touch CSS,
+                        applied before `npm run dist` in the Dockerfile
 ```
