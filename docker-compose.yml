@@ -80,6 +80,42 @@ services:
       - "traefik.http.routers.scrcpy-relay.service=scrcpy-relay"
       - "traefik.http.services.scrcpy-relay.loadbalancer.server.port=8000"
 
+  # ---- Audio sidecar (optional) ----
+  # ws-scrcpy's vendored scrcpy-server predates scrcpy's audio protocol, so
+  # the main service above is video+touch only. This runs tango-mirror
+  # instead (stock scrcpy v3.1, WebRTC video + Opus audio + touch) as a
+  # SEPARATE service so the main relay's security posture (bridge network,
+  # BIND_HOST-gated) is untouched. It needs `network_mode: host` because
+  # WebRTC's media (UDP/ICE) needs direct host-port reachability that
+  # Docker's bridge NAT doesn't provide for ports tango-mirror doesn't let
+  # us pin ahead of time. Comment this whole service out if you don't need
+  # audio — the video-only relay above works completely independently.
+  scrcpy-audio:
+    image: ghcr.io/the-code-labz/scrcpy-tablet-relay:${IMAGE_TAG:-latest}
+    # build: .
+    container_name: scrcpy-audio
+    entrypoint: ["/usr/local/bin/entrypoint-audio.sh"]
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TABLET_HOST=${TABLET_HOST:?Set TABLET_HOST in .env}
+      - TABLET_PORT=${TABLET_PORT:-}
+      - TANGO_PORT=${TANGO_PORT:-8010}
+      # REQUIRED, no default: network_mode: host means this port is
+      # reachable on every interface the host has, not just the tailnet.
+      # tango-mirror gates viewing (not just its optional device shell)
+      # behind this token when it's set.
+      - "TANGO_TOKEN=${TANGO_TOKEN:?Set TANGO_TOKEN in .env — required because this service runs with network_mode host}"
+      - KEEPALIVE_INTERVAL=${KEEPALIVE_INTERVAL:-30}
+    volumes:
+      # Same volume as scrcpy-relay — inherits the already-trusted adb
+      # keypair AND the live Wireless Debugging port scrcpy-relay's own
+      # entrypoint.sh discovers/caches, so this sidecar never needs its own
+      # pairing step or port-discovery scan.
+      - ./adb-data:/root/.android
+    depends_on:
+      - scrcpy-relay
+
 networks:
   default: {}
   traefik-network:

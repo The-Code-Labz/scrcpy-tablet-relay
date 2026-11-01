@@ -1,0 +1,12 @@
+
+<link rel="stylesheet" href="pwa-install.css">
+<script>
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+            navigator.serviceWorker.register('sw.js').catch(function (err) {
+                console.warn('[pwa] service worker registration failed', err);
+            });
+        });
+    }
+</script>
+<script src="pwa-install.js"></script>
