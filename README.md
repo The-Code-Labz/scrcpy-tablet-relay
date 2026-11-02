@@ -248,6 +248,8 @@ port 8000 — no extra ports or firewall rules needed, it rides through
 | No audio | Expected on `scrcpy-relay` (:8000) — it has no audio pipeline at all. Use the separate `scrcpy-audio` service (:8010, tango-mirror) instead — see *Audio* |
 | No "Install" banner shown | Already dismissed (14-day local cooldown) or already installed (banner never shows in standalone mode) — clear site data to reset, or just use the browser's native Add to Home Screen / install menu directly |
 | Screen won't stay off / keeps waking | That's the tablet's own lock timeout firing, not the relay — see *Keeping the screen off*, and make sure "Stay awake while charging" is ON |
+| Touch doesn't register, especially near the bottom of the screen | Fixed as of this build. The "Install this app" banner used to render over the live stream's touch layer (full width, bottom of screen, above the video in z-order), silently swallowing taps in that strip instead of forwarding them to the device. It's now hidden automatically for the whole time `<body>` carries ws-scrcpy's `stream` class — if you're still seeing it during an active session on an older image, redeploy with `docker compose pull` |
+| Video/touch area doesn't fill the screen / bottom portion is cut off on a phone | Mobile Safari/Chrome size `height: 100%` against the *large* viewport (as if the address bar were always hidden) and don't let you scroll to the real bottom when it's shown — part of the device-view ends up below the fold. The image now sizes `html`/`body` with `100dvh` (real, currently-visible viewport) where supported, so this no longer happens |
 
 ## PWA / "Add to Home Screen" behavior
 
