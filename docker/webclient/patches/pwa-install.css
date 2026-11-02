@@ -17,6 +17,20 @@
     font-size: 14px;
 }
 
+/* The banner spans the full width of the screen along the bottom edge —
+   exactly where a mirrored Android device's nav bar / gesture area lives.
+   It sits in a fixed root stacking context above the stream's touch-layer
+   canvas (z-index 1000 vs. the canvas's 1), so while it's up it silently
+   swallows every tap that lands in that strip instead of forwarding it to
+   the device — the install nag has no business competing with a live
+   control session. ws-scrcpy adds `stream` to <body> the moment a device
+   session starts (see StreamClientScrcpy#setBodyClass), so hide
+   unconditionally while that class is present; the device-list page
+   (no `.stream` class) is unaffected. */
+body.stream .pwa-install-banner {
+    display: none !important;
+}
+
 .pwa-install-banner[hidden] {
     display: none;
 }

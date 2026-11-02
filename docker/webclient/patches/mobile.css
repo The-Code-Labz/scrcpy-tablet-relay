@@ -10,6 +10,23 @@ html, body {
     -webkit-text-size-adjust: 100%;
 }
 
+/* Upstream sizes body with `height: 100%`, which on mobile Safari/Chrome
+   resolves against the viewport's LARGE size (as if the address bar /
+   toolbar were always hidden). When the toolbar is actually showing, the
+   real visible area is shorter than that — but body still occupies the
+   larger box and `overflow: hidden` blocks scrolling to reveal the
+   difference. Net effect: a strip along the bottom of the device-view
+   (video, toolbox, and anything mirrored there, e.g. the Android nav
+   bar) is laid out below the fold and is neither visible nor reachable
+   by touch. `100dvh` tracks the real, currently-visible viewport instead.
+   Guarded behind @supports so browsers without dvh keep the existing
+   100% behavior untouched. */
+@supports (height: 100dvh) {
+    html, body {
+        height: 100dvh;
+    }
+}
+
 /* Respect iPhone notch / home-indicator safe areas so the toolbox strip
    and device list aren't drawn under them in standalone (PWA) mode. */
 @supports (padding: max(0px)) {
