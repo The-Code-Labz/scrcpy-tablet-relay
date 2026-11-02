@@ -76,6 +76,26 @@ connect_tablet || echo "[audio] initial connect failed — keepalive will keep r
 ) &
 KEEPALIVE_PID=$!
 
+# iOS 16.4+ "Home Screen web apps" launch from the manifest's start_url,
+# not the page you were on when you tapped Add to Home Screen — so a
+# plain ?token= in the browser bar at install time is silently dropped on
+# every subsequent cold launch of the installed icon, and the app just
+# shows the "unauthorized" screen. Bake the real token into start_url at
+# boot (only known value is the runtime TANGO_TOKEN, not available at
+# image build time), so the installed PWA always launches authenticated.
+# tango-mirror's own client.js reads ?token= on load, saves it to
+# localStorage, then scrubs it from the visible URL — this just gives it
+# something to read on every cold start instead of only the first one.
+MANIFEST_PATH="/opt/tango-mirror/node_modules/tango-mirror/public/manifest.webmanifest"
+if [ -f "${MANIFEST_PATH}" ]; then
+  if [ -n "${TANGO_TOKEN}" ]; then
+    ESCAPED_TOKEN=$(printf '%s' "${TANGO_TOKEN}" | sed 's/[&|\\]/\\&/g')
+    sed -i "s|__TANGO_START_QUERY__|?token=${ESCAPED_TOKEN}|" "${MANIFEST_PATH}"
+  else
+    sed -i "s|__TANGO_START_QUERY__||" "${MANIFEST_PATH}"
+  fi
+fi
+
 echo "[audio] starting tango-mirror on :${TANGO_PORT}"
 TANGO_ARGS=(--port "${TANGO_PORT}" --no-signal --no-page --adb-host 127.0.0.1 --adb-port 5037)
 [ -n "${TANGO_TOKEN}" ] && TANGO_ARGS+=(--token "${TANGO_TOKEN}")

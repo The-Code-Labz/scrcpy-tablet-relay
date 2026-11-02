@@ -283,6 +283,25 @@ app *installable*, they don't make either browser tell anyone that:
 * If iOS evicts the PWA from memory, reopening it reconnects in a few
   seconds — this is normal iOS background-tab behavior, not a relay issue.
 
+### Installed-icon token auth on `scrcpy-audio` (iOS)
+
+`scrcpy-audio`'s device list/stream are gated by `TANGO_TOKEN` via a
+`?token=...` query param. That works fine opened directly in Safari, but
+**iOS 16.4+ launches installed Home Screen web apps from the manifest's
+`start_url`, not from the page you were on when you tapped Add to Home
+Screen** — so a plain `?token=...` link you installed from would silently
+drop the token on every later cold launch of the icon, landing on an
+"unauthorized" screen. `entrypoint-audio.sh` works around this by baking
+the real `TANGO_TOKEN` straight into `manifest.webmanifest`'s `start_url`
+at container boot, so the installed icon always launches pre-authenticated
+regardless of which URL you installed from. `scrcpy-relay` (:8000) has no
+auth to begin with, so it isn't affected.
+
+**If you already added `scrcpy-audio` to your Home Screen before this
+fix**, remove that icon and re-add it once — the cached manifest it
+installed from didn't have the token baked in. Re-adding fetches the
+current (now-templated) manifest.
+
 ## Configuration
 
 All in `.env` (see `.env.example`):
