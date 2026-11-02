@@ -2,7 +2,7 @@
   "name": "scrcpy Audio Relay",
   "short_name": "ScrcpyAudio",
   "description": "Remote view, control, and audio for your Android tablet over the web.",
-  "start_url": "./",
+  "start_url": "./__TANGO_START_QUERY__",
   "scope": "./",
   "id": "./",
   "display": "standalone",
