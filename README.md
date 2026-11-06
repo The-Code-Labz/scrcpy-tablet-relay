@@ -279,9 +279,25 @@ app *installable*, they don't make either browser tell anyone that:
   (`ws-scrcpy`: `?action=proxy-adb&...`; `tango-mirror`: `/api/*`), so
   there's no risk of it serving stale/cached stream data.
 * Touch targets (toolbox buttons, device list rows, dialog buttons) are
-  enlarged to ≥44px on coarse-pointer (touch) devices, and the stream/touch
-  surface disables text-selection callouts and rubber-band scrolling so it
-  feels like a native app rather than a web page.
+  enlarged to a true ≥44px (Apple HIG minimum) on coarse-pointer (touch)
+  devices via `max(<rem value>, 44px)` — not just the rem figure alone,
+  which at this app's fixed 14px root font-size only resolves to ~40px and
+  would silently fall short on exactly the narrow-phone breakpoint an
+  iPhone 13 Pro's 390px portrait viewport falls into. The narrow-phone
+  override trims *margins*, never the button itself, to stay compliant.
+  The stream/touch surface also disables text-selection callouts and
+  rubber-band scrolling so it feels like a native app rather than a web
+  page.
+* Safe-area insets (notch / Dynamic Island / home indicator) are applied
+  on all four sides of the toolbox strip, not just top/bottom — the
+  toolbox is a side column (`.control-buttons-list`), and on an iPhone
+  with a side notch, rotating to landscape can put the notch on the same
+  edge the toolbox sits on.
+* The Home Screen icon uses a dedicated 180×180 PNG (`icon-180.png`,
+  `<link rel="apple-touch-icon" sizes="180x180">`) instead of letting iOS
+  downscale the 192px PWA icon — the exact size Apple's Home Screen grid
+  asks for on iPhone 13 Pro and most non-Plus/Max models, so it renders
+  crisp instead of softly resampled.
 * If iOS evicts the PWA from memory, reopening it reconnects in a few
   seconds — this is normal iOS background-tab behavior, not a relay issue.
 

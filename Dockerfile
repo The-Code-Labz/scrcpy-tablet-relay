@@ -76,6 +76,7 @@ RUN git clone --depth 1 --branch "${WSSCRCPY_REF}" https://github.com/NetrisTV/w
     && cp /tmp/webclient/pwa-assets/sw.js dist/public/sw.js \
     && cp /tmp/webclient/pwa-assets/icon-192.png dist/public/icon-192.png \
     && cp /tmp/webclient/pwa-assets/icon-512.png dist/public/icon-512.png \
+    && cp /tmp/webclient/pwa-assets/icon-180.png dist/public/icon-180.png \
     && cp /tmp/webclient/pwa-assets/relay-ui.js dist/public/relay-ui.js \
     && cp /tmp/webclient/pwa-assets/pwa-install.js dist/public/pwa-install.js \
     && npm cache clean --force \
@@ -103,10 +104,11 @@ RUN mkdir -p /opt/tango-mirror && cd /opt/tango-mirror \
     && npm cache clean --force \
     && rm -rf /tmp/tango-pwa
 
-# icon-192/512.png live in the ws-scrcpy stage above (webclient dir already
-# removed by then) — copy them into tango-mirror's public dir from the
-# original build-context path instead of the (now-deleted) /tmp/webclient.
+# icon-192/512/180.png live in the ws-scrcpy stage above (webclient dir
+# already removed by then) — copy them into tango-mirror's public dir from
+# the original build-context path instead of the (now-deleted) /tmp/webclient.
 COPY docker/webclient/pwa-assets/icon-192.png docker/webclient/pwa-assets/icon-512.png \
+     docker/webclient/pwa-assets/icon-180.png \
      docker/webclient/patches/pwa-install.css \
      /opt/tango-mirror/node_modules/tango-mirror/public/
 

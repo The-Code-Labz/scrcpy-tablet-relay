@@ -14,6 +14,13 @@
     <meta name="apple-mobile-web-app-title" content="ScrcpyRelay">
     <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
     <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+    <!-- iOS reads apple-touch-icon directly (ignores the manifest for this),
+         and renders whatever size it's given at native resolution without
+         re-sampling for intermediate sizes — so handing it only a 192px
+         icon for a 180x180 Home Screen slot (iPhone 13 Pro and most other
+         non-Plus/Max models) means it's upscaling slightly, not the crisp
+         1:1 size Apple actually asks for. Ship the exact size. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
     <link rel="apple-touch-icon" href="icon-192.png">
 </head>
 <body>

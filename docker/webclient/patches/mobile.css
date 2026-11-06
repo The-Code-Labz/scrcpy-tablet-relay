@@ -28,11 +28,23 @@ html, body {
 }
 
 /* Respect iPhone notch / home-indicator safe areas so the toolbox strip
-   and device list aren't drawn under them in standalone (PWA) mode. */
+   and device list aren't drawn under them in standalone (PWA) mode.
+   The toolbox (.control-buttons-list) is a side column, not a top bar
+   (.device-view lays it out with flex-direction: row-reverse) — on an
+   iPhone with a notch (e.g. 13 Pro), rotating to landscape puts the
+   notch on the LEFT or RIGHT edge depending on which way it's held, and
+   whichever edge that is can be the same edge the toolbox sits on. Only
+   padding-top/bottom was handled before, which covers portrait but
+   leaves the toolbox's buttons reachable-but-partly-under the notch
+   cutout in landscape. Adding left/right costs nothing on devices
+   without a side notch — env(safe-area-inset-left/right) is just 0px
+   there. */
 @supports (padding: max(0px)) {
     .control-buttons-list {
         padding-top: max(.357rem, env(safe-area-inset-top));
         padding-bottom: max(.357rem, env(safe-area-inset-bottom));
+        padding-left: env(safe-area-inset-left);
+        padding-right: env(safe-area-inset-right);
     }
     body.list #devices {
         padding-left: max(0px, env(safe-area-inset-left));
@@ -61,15 +73,19 @@ html, body {
 
 /* Touch targets: Apple HIG / Material both call for >=44x44 CSS px.
    Desktop mouse users keep the original compact 2.143rem buttons; coarse
-   pointers (touch) get a roomier panel and bigger hit areas. */
+   pointers (touch) get a roomier panel and bigger hit areas.
+   NOTE: the rem figures below are wrapped in max(..., 44px). At this
+   app's fixed html{font-size} of 14px, 2.86rem only resolves to ~40px —
+   under Apple's own 44pt minimum despite the comment's original intent.
+   max() guarantees the real floor regardless of root font-size. */
 @media (pointer: coarse) {
     :root {
-        --panel-width: 4.3rem;
+        --panel-width: 4.6rem;
     }
 
     .control-button {
-        width: 2.86rem;
-        height: 2.86rem;
+        width: max(2.86rem, 44px);
+        height: max(2.86rem, 44px);
         margin: .45rem .72rem;
     }
 
@@ -87,28 +103,30 @@ html, body {
     }
 
     .dialog-footer button {
-        min-height: 2.75rem;
+        min-height: max(2.75rem, 44px);
         padding: .6rem 1rem;
     }
 
     .control-wrapper > label {
-        min-width: 2.86rem;
-        min-height: 2.86rem;
+        min-width: max(2.86rem, 44px);
+        min-height: max(2.86rem, 44px);
     }
 }
 
-/* Small phones in portrait: the fixed left-hand toolbox strip eats a
-   meaningful slice of a ~380px-wide viewport. Trim it back down a bit
-   while staying at/above the 44px touch minimum. */
+/* Small phones in portrait (this is the exact breakpoint an iPhone 13
+   Pro's 390px-wide portrait viewport falls into): the fixed toolbox
+   strip eats a meaningful slice of the screen. Trim MARGINS here, not
+   the button itself — the previous 2.2rem (~31px) button broke the
+   44px floor the comment promised, on exactly this device class. */
 @media (pointer: coarse) and (max-width: 480px) {
     :root {
-        --panel-width: 3.4rem;
+        --panel-width: 3.85rem;
     }
 
     .control-button {
-        width: 2.2rem;
-        height: 2.2rem;
-        margin: .3rem .6rem;
+        width: max(2.2rem, 44px);
+        height: max(2.2rem, 44px);
+        margin: .25rem .35rem;
     }
 }
 
