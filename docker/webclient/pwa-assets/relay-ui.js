@@ -17,10 +17,18 @@
 
     function setDot(state) {
         var dot = qs('#relay-reconnect-dot');
-        if (!dot) {
-            return;
+        if (dot) {
+            dot.className = 'relay-dot relay-dot-' + state;
         }
-        dot.className = 'relay-dot relay-dot-' + state;
+        // Drives the FAB's collapsed/expanded CSS (relay-ui.css): expanded
+        // automatically on 'offline'/'unknown' (something needs attention),
+        // collapsed to a plain icon otherwise so it stops sitting as a
+        // full-size dead zone over the stream's touch surface while the
+        // connection is healthy.
+        var fab = qs('#relay-reconnect-fab');
+        if (fab) {
+            fab.dataset.status = state;
+        }
     }
 
     function fetchJson(url, opts) {

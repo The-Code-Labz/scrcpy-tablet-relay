@@ -8,5 +8,37 @@
             });
         });
     }
+
+    // tango-mirror's own app.js has no equivalent of ws-scrcpy's
+    // `document.body.classList.add('stream')` on connect — it's a
+    // single-page app that always renders #stage-wrap, so the shared
+    // pwa-install.css rule `body.stream .pwa-install-banner { display:
+    // none }` (which hides the banner so it stops swallowing taps meant
+    // for the stream/navbar) silently never fired on this page. app.js
+    // appends a <canvas class="screen"> or <video class="screen-video">
+    // into #stage once a device connects, and clears #stage's innerHTML
+    // on disconnect (si()) — mirror the same `stream` class off that DOM
+    // signal instead of touching the vendored app.js.
+    (function () {
+        function wire() {
+            var stage = document.getElementById('stage');
+            if (!stage) {
+                return; // markup not present on this page for some reason — fail quiet
+            }
+            function sync() {
+                document.body.classList.toggle('stream', stage.childElementCount > 0);
+            }
+            new MutationObserver(sync).observe(stage, { childList: true });
+            sync();
+        }
+        // This snippet is injected right after the opening <body> tag —
+        // #stage is further down in document order and doesn't exist yet
+        // at this point, so wait for the parser to reach it.
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', wire);
+        } else {
+            wire();
+        }
+    })();
 </script>
 <script src="pwa-install.js"></script>

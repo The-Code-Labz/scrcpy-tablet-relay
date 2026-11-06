@@ -248,8 +248,8 @@ port 8000 — no extra ports or firewall rules needed, it rides through
 | No audio | Expected on `scrcpy-relay` (:8000) — it has no audio pipeline at all. Use the separate `scrcpy-audio` service (:8010, tango-mirror) instead — see *Audio* |
 | No "Install" banner shown | Already dismissed (14-day local cooldown) or already installed (banner never shows in standalone mode) — clear site data to reset, or just use the browser's native Add to Home Screen / install menu directly |
 | Screen won't stay off / keeps waking | That's the tablet's own lock timeout firing, not the relay — see *Keeping the screen off*, and make sure "Stay awake while charging" is ON |
-| Touch doesn't register, especially near the bottom of the screen | Fixed as of this build. The "Install this app" banner used to render over the live stream's touch layer (full width, bottom of screen, above the video in z-order), silently swallowing taps in that strip instead of forwarding them to the device. It's now hidden automatically for the whole time `<body>` carries ws-scrcpy's `stream` class — if you're still seeing it during an active session on an older image, redeploy with `docker compose pull` |
-| Video/touch area doesn't fill the screen / bottom portion is cut off on a phone | Mobile Safari/Chrome size `height: 100%` against the *large* viewport (as if the address bar were always hidden) and don't let you scroll to the real bottom when it's shown — part of the device-view ends up below the fold. The image now sizes `html`/`body` with `100dvh` (real, currently-visible viewport) where supported, so this no longer happens |
+| Touch doesn't register, especially near the bottom of the screen | Two separate causes, both fixed. (1) The "Install this app" banner used to render over the live stream's touch layer (full width, bottom of screen, above the video in z-order); hidden automatically on `scrcpy-relay` (:8000) for the whole time `<body>` carries ws-scrcpy's `stream` class, **and** on `scrcpy-audio`/tango-mirror (:8010), which has no such class natively — a small observer script now toggles the same `stream` class there off the stage element's content instead. (2) The floating **Reconnect** button on :8000 used to stay full-size (176×60) at all times, including in landscape (video's normal orientation — the old breakpoint only checked width, not landscape height); it now collapses to a plain 44–48px icon by default and only expands on hover/focus or when the connection actually needs attention. If you're still seeing either on an older image, redeploy with `docker compose pull` |
+| Video/touch area doesn't fill the screen / bottom portion is cut off on a phone | Mobile Safari/Chrome size `height: 100%` against the *large* viewport (as if the address bar were always hidden) and don't let you scroll to the real bottom when it's shown — part of the device-view ends up below the fold. The image now sizes `html`/`body` with `100dvh` (real, currently-visible viewport) where supported, so this no longer happens. This fix only ever applied to `scrcpy-relay` (:8000); tango-mirror's own page (:8010) already ships `100dvh` upstream |
 
 ## PWA / "Add to Home Screen" behavior
 
@@ -360,5 +360,8 @@ docker/webclient/       build-time overlay on ws-scrcpy: PWA app shell
                         routes backing it — all applied before
                         `npm run dist` in the Dockerfile
 docker/tango-pwa/       same PWA app-shell treatment, applied to
-                        tango-mirror's bundled page instead
+                        tango-mirror's bundled page instead, plus a small
+                        observer that mirrors ws-scrcpy's `body.stream`
+                        class so the shared install-banner CSS actually
+                        hides it here too
 ```

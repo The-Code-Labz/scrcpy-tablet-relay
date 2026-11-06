@@ -34,19 +34,30 @@
     box-sizing: border-box;
 }
 
+/* Default state is collapsed to a plain 48px icon button. The expanded
+   label/meta/arrow form (176x60) is ONLY shown via :hover/:focus-within or
+   when data-status signals something actually needs attention ("offline"
+   or "unknown") — see relay-ui.js's setDot(). A persistently full-size FAB
+   sits directly over the stream's touch-forwarding surface, in the exact
+   bottom-right corner many Android devices reserve for recent-apps/
+   overview gestures, and the old fixed 560px-width media query never
+   collapsed it in landscape (the normal orientation for watching video),
+   so it ate taps there on every phone the whole time a stream was
+   healthy. Collapsing by default removes that dead zone whenever the
+   widget isn't needed; it still expands instantly the moment it is. */
 .relay-reconnect-fab {
     position: fixed;
     right: max(18px, calc(env(safe-area-inset-right) + 14px));
     bottom: max(18px, calc(env(safe-area-inset-bottom) + 14px));
     z-index: 980;
     display: grid;
-    grid-template-columns: 38px minmax(0, 1fr) 20px;
+    grid-template-columns: 38px;
     align-items: center;
     gap: 10px;
-    min-width: 176px;
-    min-height: 60px;
+    min-width: 48px;
+    min-height: 48px;
     margin: 0;
-    padding: 9px 12px 9px 10px;
+    padding: 5px;
     border: 1px solid var(--relay-border-strong);
     border-radius: 18px;
     color: var(--relay-text);
@@ -62,7 +73,23 @@
         transform 180ms var(--relay-ease),
         border-color 180ms ease,
         background-color 180ms ease,
-        box-shadow 180ms ease;
+        box-shadow 180ms ease,
+        grid-template-columns 160ms var(--relay-ease),
+        min-width 160ms var(--relay-ease);
+}
+
+.relay-reconnect-fab:hover,
+.relay-reconnect-fab:focus-within,
+.relay-reconnect-fab[data-status="offline"],
+.relay-reconnect-fab[data-status="unknown"] {
+    grid-template-columns: 38px minmax(0, 1fr) 20px;
+    min-width: 176px;
+    padding: 9px 12px 9px 10px;
+}
+
+.relay-reconnect-fab:not(:hover):not(:focus-within):not([data-status="offline"]):not([data-status="unknown"]) .relay-fab-copy,
+.relay-reconnect-fab:not(:hover):not(:focus-within):not([data-status="offline"]):not([data-status="unknown"]) .relay-fab-arrow {
+    display: none;
 }
 
 @supports (backdrop-filter: blur(16px)) {
@@ -1000,19 +1027,26 @@
 }
 
 @media (max-width: 560px) {
+    /* Collapsed footprint shrinks slightly further on narrow screens, but
+       the hover/focus/attention expansion rule above still applies — do
+       NOT force-hide .relay-fab-copy/.relay-fab-arrow here unconditionally,
+       that used to defeat the offline/unknown expansion on every phone. */
     .relay-reconnect-fab {
         right: max(12px, calc(env(safe-area-inset-right) + 10px));
         bottom: max(12px, calc(env(safe-area-inset-bottom) + 10px));
-        min-width: 58px;
-        min-height: 58px;
-        grid-template-columns: 38px;
-        padding: 9px;
+        min-width: 44px;
+        min-height: 44px;
+        grid-template-columns: 32px;
+        padding: 6px;
         border-radius: 17px;
     }
 
-    .relay-fab-copy,
-    .relay-fab-arrow {
-        display: none;
+    .relay-reconnect-fab:hover,
+    .relay-reconnect-fab:focus-within,
+    .relay-reconnect-fab[data-status="offline"],
+    .relay-reconnect-fab[data-status="unknown"] {
+        min-width: 150px;
+        grid-template-columns: 32px minmax(0, 1fr) 18px;
     }
 
     .relay-modal-overlay {
